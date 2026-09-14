@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "routes": [
+    {"method": "POST", "path": "/auth/otp/request", "module": "identity"},
+    {"method": "POST", "path": "/auth/otp/verify", "module": "identity"},
+    {"method": "GET", "path": "/customers/:id", "module": "crm"},
+    {"method": "POST", "path": "/integrations/woocommerce/orders", "module": "commerce_bridge", "idempotent": true},
+    {"method": "GET", "path": "/technicians/me/jobs", "module": "field_service", "hideCustomerMobile": true},
+    {"method": "PATCH", "path": "/jobs/:id/status", "module": "field_service", "audit": true},
+    {"method": "POST", "path": "/jobs/:id/evidence", "module": "field_service"},
+    {"method": "POST", "path": "/jobs/:id/rating", "module": "crm"},
+    {"method": "POST", "path": "/jobs/:id/settlement/calculate", "module": "finance", "audit": true},
+    {"method": "GET", "path": "/health", "module": "system"}
+  ]
+}
