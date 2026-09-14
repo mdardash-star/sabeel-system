@@ -1,0 +1,10 @@
+{
+  "source": "woocommerce",
+  "acceptedTrigger": "paid_order",
+  "idempotencyKey": "source_order_id",
+  "imports": ["order", "customer", "items", "totals", "shipping_address", "billing_address", "payment_status"],
+  "serviceDecision": ["shipping_only", "installation_required", "service_required"],
+  "onInstallationRequired": ["upsert_customer", "upsert_service_location", "create_service_job", "emit_job_created"],
+  "security": ["authenticate_webhook", "verify_signature", "reject_replay", "audit_ingestion"],
+  "productionWriteEnabled": false
+}
