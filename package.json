@@ -1,0 +1,12 @@
+{
+  "name": "subil-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SUBIL OS business operating platform",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test"
+  },
+  "engines": {"node": ">=20"}
+}
