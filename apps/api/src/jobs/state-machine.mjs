@@ -29,7 +29,16 @@ export function technicianJobView(job) {
     customerMobile,
     billingPhone,
     shippingPhone,
+    mobile,
+    phone,
+    whatsapp,
     ...safe
   } = job;
+
+  if (safe.customer && typeof safe.customer === 'object') {
+    const { phone: _p, mobile: _m, whatsapp: _w, ...customerSafe } = safe.customer;
+    safe.customer = customerSafe;
+  }
+
   return safe;
 }
