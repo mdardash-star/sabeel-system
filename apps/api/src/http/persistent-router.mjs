@@ -1,9 +1,38 @@
 import { can } from '../auth/rbac.mjs';
 import { createRepositories } from '../persistence/repositories.mjs';
-import { transitionTechnicianJob } from '../persistence/transactions.mjs';
+import { completeTechnicianJob, transitionTechnicianJob } from '../persistence/transactions.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
+
+  const completeMatch = url.match(/^\/api\/v1\/technicians\/me\/jobs\/([^/]+)\/complete$/);
+  if (method === 'POST' && completeMatch) {
+    const identity = await resolveTechnician({ role, context, db });
+    if (identity.error) return identity.error;
+
+    try {
+      const result = await completeTechnicianJob(db, {
+        jobId: completeMatch[1],
+        technicianId: identity.technician.id,
+        actorUserId: context.userId,
+        evidence: body.evidence
+      });
+      if (!result) return response(404, { error: 'job_not_found' });
+      return response(200, result);
+    } catch (error) {
+      const completionErrors = {
+        'Evidence is required before completion': 'evidence_required',
+        'Too many evidence items': 'too_many_evidence_items',
+        'Invalid evidence': 'invalid_evidence',
+        'Duplicate evidence': 'duplicate_evidence',
+        'Job must be in progress': 'job_not_in_progress',
+        'Completion finance configuration missing': 'finance_configuration_missing'
+      };
+      const code = completionErrors[error.message];
+      if (code) return response(422, { error: code });
+      throw error;
+    }
+  }
 
   const statusMatch = url.match(/^\/api\/v1\/technicians\/me\/jobs\/([^/]+)\/status$/);
   if (method === 'PATCH' && statusMatch) {

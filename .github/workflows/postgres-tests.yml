@@ -30,6 +30,7 @@ jobs:
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/003_dispatch_capabilities.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/004_technician_location.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/005_dispatch_scheduling.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/006_completion_finance.sql
       - name: Test core schema
         run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/tests/core-schema.sql
       - name: Verify dispatch schema
@@ -44,6 +45,13 @@ jobs:
         run: |
           if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "UPDATE service_jobs SET service_duration_minutes=0;"; then
             echo "Expected duration constraint to reject zero"
+            exit 1
+          fi
+      - name: Verify completion finance constraints
+        run: |
+          test "$(psql -h localhost -U subil -d subil_test -tAc "SELECT commission_rate FROM compensation_policies WHERE id='initial-margin-30';")" = "0.3000"
+          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO compensation_policies(id,policy_version,mode,commission_rate) VALUES ('invalid','v1','percentage',0.75);"; then
+            echo "Expected commission constraint to reject 0.75"
             exit 1
           fi
       - name: Verify technician coordinate constraints
@@ -63,6 +71,7 @@ jobs:
           if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"; then exit 1; else exit 0; fi
       - name: Roll back migrations
         run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/006_completion_finance.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/005_dispatch_scheduling.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/004_technician_location.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/003_dispatch_capabilities.down.sql
@@ -70,5 +79,5 @@ jobs:
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.down.sql
       - name: Verify rollback
         run: |
-          COUNT=$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','customers','service_jobs','technician_settlements','wallet_entries','installed_assets','webhook_deliveries','technician_skills','technician_availability','technician_locations');")
+          COUNT=$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','customers','service_jobs','technician_settlements','wallet_entries','installed_assets','webhook_deliveries','technician_skills','technician_availability','technician_locations','compensation_policies','order_costs');")
           test "$COUNT" = "0"

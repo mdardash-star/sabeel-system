@@ -37,6 +37,7 @@ Base prefix: `/api/v1`
 - GET `/technicians/me/jobs?from=<ISO>&to=<ISO>`
 - GET `/technicians/me/jobs/:id` — returns the assigned job only; another technician's job returns `404`
 - PATCH `/technicians/me/jobs/:id/status` — persists a valid technician workflow transition and audit event; completion uses the evidence endpoint
+- POST `/technicians/me/jobs/:id/complete` — atomically saves evidence, completes the owned job, and creates a pending settlement from server-side order costs and compensation policy
 - GET `/technicians/me/wallet?limit=20&offset=0` — PostgreSQL-backed balance and paginated ledger scoped to the signed-in technician
 
 The signed-in user is resolved to an active technician profile server-side. Job lists are read from PostgreSQL and expose operational location fields only; customer contact fields are never selected.
