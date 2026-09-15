@@ -61,6 +61,30 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     });
   }
 
+  if (method === 'GET' && url === '/api/v1/jobs/stats') {
+    if (!can(role, 'jobs:read')) return response(403, { error: 'forbidden' });
+    const stats = await createRepositories(db).jobs.operationsStats();
+    return response(200, { stats });
+  }
+
+  if (method === 'GET' && url === '/api/v1/jobs') {
+    if (!can(role, 'jobs:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const status = context.status || 'all';
+    if (!['all','open','pending_assignment','scheduled','active','overdue','completed','cancelled'].includes(status)) {
+      return response(400, { error: 'invalid_job_status_filter' });
+    }
+    const rows = await createRepositories(db).jobs.listForOperations({
+      ...pagination, status, query: context.query || ''
+    });
+    return response(200, {
+      jobs: rows.map(({ total_count, ...job }) => job),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 },
+      status
+    });
+  }
+
   const customerMatch = url.match(/^\/api\/v1\/customers\/([^/]+)$/);
   const timelineMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/timeline$/);
   if (method === 'GET' && timelineMatch) {
