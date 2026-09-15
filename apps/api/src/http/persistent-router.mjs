@@ -1,6 +1,7 @@
 import { can } from '../auth/rbac.mjs';
 import { createRepositories } from '../persistence/repositories.mjs';
 import { approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, transitionTechnicianJob, updateAssetStatus } from '../persistence/transactions.mjs';
+import { assignPersistentJob, listDispatchCandidates, reassignPersistentJob } from '../dispatch/persistent-dispatch.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
@@ -83,6 +84,52 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       pagination: { ...pagination, total: rows[0]?.total_count || 0 },
       status
     });
+  }
+
+  const candidatesMatch = url.match(/^\/api\/v1\/jobs\/([^/]+)\/candidates$/);
+  if (method === 'GET' && candidatesMatch) {
+    if (!can(role, 'jobs:assign')) return response(403, { error: 'forbidden' });
+    const limit = context.limit === undefined ? 10 : Number(context.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) return response(400, { error: 'invalid_pagination' });
+    try {
+      const result = await listDispatchCandidates(db, candidatesMatch[1], {
+        windowStart: context.from, windowEnd: context.to, limit
+      });
+      return response(200, result);
+    } catch (error) {
+      if (error.message === 'Service job not found') return response(404, { error: 'job_not_found' });
+      if (error.message === 'Service job is not dispatchable') return response(409, { error: 'job_not_dispatchable' });
+      throw error;
+    }
+  }
+
+  const dispatchMatch = url.match(/^\/api\/v1\/jobs\/([^/]+)\/(assign|reassign)$/);
+  if (method === 'POST' && dispatchMatch) {
+    if (!can(role, 'jobs:assign') || !can(role, 'jobs:schedule')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    const technicianId = cleanOptional(body.technicianId);
+    const scheduledAt = parseDate(body.scheduledAt);
+    const serviceDurationMinutes = Number(body.serviceDurationMinutes ?? 60);
+    const reason = cleanOptional(body.reason);
+    if (!technicianId || !scheduledAt || !Number.isInteger(serviceDurationMinutes) || serviceDurationMinutes < 1 || serviceDurationMinutes > 1440 ||
+        (dispatchMatch[2] === 'reassign' && reason.length < 3)) {
+      return response(400, { error: 'invalid_assignment' });
+    }
+    try {
+      const input = { jobId: dispatchMatch[1], technicianId, scheduledAt, serviceDurationMinutes, actorUserId: context.userId };
+      const job = dispatchMatch[2] === 'assign'
+        ? await assignPersistentJob(db, input)
+        : await reassignPersistentJob(db, { ...input, reason });
+      return response(200, { job });
+    } catch (error) {
+      if (error.message === 'Service job not found') return response(404, { error: 'job_not_found' });
+      if (error.message.includes('already assigned') || error.message.includes('Only scheduled jobs')) return response(409, { error: 'job_not_assignable' });
+      if (error.message.includes('scheduling conflict')) return response(409, { error: 'schedule_conflict' });
+      if (error.message.includes('eligible') || error.message.includes('skill') || error.message.includes('unavailable') || error.message.includes('scheduled time')) {
+        return response(422, { error: 'assignment_invalid', message: error.message });
+      }
+      throw error;
+    }
   }
 
   const customerMatch = url.match(/^\/api\/v1\/customers\/([^/]+)$/);
