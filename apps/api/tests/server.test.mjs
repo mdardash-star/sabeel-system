@@ -134,6 +134,24 @@ for(const collection of ['addresses','assets','orders']){
   });
 }
 
+test('live HTTP customer asset registration is authenticated and persisted',async(t)=>{
+  const db={query:async(sql,params)=>{
+    assert.match(sql,/INSERT INTO installed_assets/);
+    assert.equal(params[0],'customer-1');
+    assert.equal(params[1],'جهاز تحلية 7 مراحل');
+    assert.equal(params[5],6);
+    return{rows:[{id:'asset-1',customer_id:'customer-1',product_id:params[1],next_maintenance_at:params[6],status:'active'}]};
+  }};
+  const server=createApiServer({db:withSession(db,{role:'support'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();
+  const response=await fetch(`http://127.0.0.1:${port}/api/v1/customers/customer-1/assets`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({productId:'جهاز تحلية 7 مراحل',serialNumber:'SBL-200',installedAt:'2026-09-15',maintenanceIntervalMonths:6})});
+  const payload=await response.json();
+  assert.equal(response.status,201);
+  assert.equal(payload.asset.id,'asset-1');
+});
+
 test('live HTTP technician job details route is connected to PostgreSQL', async (t) => {
   const db = {
     query: async (sql, params) => {
