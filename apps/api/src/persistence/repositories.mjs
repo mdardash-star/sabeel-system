@@ -13,6 +13,120 @@ export function createRepositories(db) {
           [userId]
         );
         return rows[0] || null;
+      },
+      async operationsStats() {
+        const { rows } = await db.query(
+          `SELECT COUNT(*)::integer AS total,
+                  COUNT(*) FILTER (WHERE t.is_active AND u.is_active)::integer AS active,
+                  COUNT(*) FILTER (WHERE NOT t.is_active OR NOT u.is_active)::integer AS inactive,
+                  COUNT(*) FILTER (WHERE t.is_active AND u.is_active AND EXISTS (
+                    SELECT 1 FROM technician_availability a
+                    WHERE a.technician_id = t.id AND a.available_from <= now() AND a.available_to >= now()
+                  ) AND NOT EXISTS (
+                    SELECT 1 FROM service_jobs j WHERE j.technician_id = t.id
+                    AND j.status IN ('en_route','arrived','in_progress')
+                  ))::integer AS available_now,
+                  COUNT(*) FILTER (WHERE EXISTS (
+                    SELECT 1 FROM service_jobs j WHERE j.technician_id = t.id
+                    AND j.status IN ('en_route','arrived','in_progress')
+                  ))::integer AS busy_now,
+                  COALESCE((SELECT AVG(score) FROM service_ratings WHERE verified_service = true), 0)::numeric(3,2) AS avg_rating
+           FROM technicians t JOIN users u ON u.id = t.user_id`
+        );
+        return rows[0] || { total: 0, active: 0, inactive: 0, available_now: 0, busy_now: 0, avg_rating: 0 };
+      },
+      async listForOperations({ query = '', status = 'all', limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT t.id, t.user_id, u.mobile, t.city_id, t.branch_id, t.compensation_policy_id,
+                  t.is_active, t.created_at,
+                  COALESCE(skills.values, ARRAY[]::text[]) AS skills,
+                  COALESCE(metrics.jobs_today, 0)::integer AS jobs_today,
+                  COALESCE(metrics.active_jobs, 0)::integer AS active_jobs,
+                  COALESCE(metrics.completed_30d, 0)::integer AS completed_30d,
+                  COALESCE(metrics.on_time_30d, 0)::integer AS on_time_30d,
+                  COALESCE(ratings.avg_rating, 0)::numeric(3,2) AS avg_rating,
+                  COALESCE(ratings.rating_count, 0)::integer AS rating_count,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM technicians t
+           JOIN users u ON u.id = t.user_id
+           LEFT JOIN LATERAL (
+             SELECT ARRAY_AGG(skill_code ORDER BY skill_code) AS values
+             FROM technician_skills WHERE technician_id = t.id
+           ) skills ON true
+           LEFT JOIN LATERAL (
+             SELECT COUNT(*) FILTER (WHERE scheduled_at >= date_trunc('day', now()) AND scheduled_at < date_trunc('day', now()) + interval '1 day') AS jobs_today,
+                    COUNT(*) FILTER (WHERE status IN ('scheduled','en_route','arrived','in_progress')) AS active_jobs,
+                    COUNT(*) FILTER (WHERE status = 'completed' AND completed_at >= now() - interval '30 days') AS completed_30d,
+                    COUNT(*) FILTER (WHERE status = 'completed' AND completed_at >= now() - interval '30 days'
+                      AND completed_at <= scheduled_at + service_duration_minutes * interval '1 minute') AS on_time_30d
+             FROM service_jobs WHERE technician_id = t.id
+           ) metrics ON true
+           LEFT JOIN LATERAL (
+             SELECT AVG(score) FILTER (WHERE verified_service = true) AS avg_rating,
+                    COUNT(*) FILTER (WHERE verified_service = true) AS rating_count
+             FROM service_ratings WHERE technician_id = t.id
+           ) ratings ON true
+           WHERE ($1 = '' OR u.mobile LIKE '%' || $1 || '%' OR t.id::text ILIKE '%' || $1 || '%'
+                  OR t.city_id ILIKE '%' || $1 || '%' OR COALESCE(t.branch_id, '') ILIKE '%' || $1 || '%')
+             AND CASE $2 WHEN 'active' THEN t.is_active AND u.is_active
+                         WHEN 'inactive' THEN NOT t.is_active OR NOT u.is_active ELSE true END
+           ORDER BY t.is_active DESC, metrics.active_jobs DESC, metrics.completed_30d DESC, t.created_at DESC
+           LIMIT $3 OFFSET $4`,
+          [query.trim(), status, limit, offset]
+        );
+        return rows;
+      },
+      async performance(id, from, to) {
+        const { rows } = await db.query(
+          `SELECT t.id, t.user_id, u.mobile, t.city_id, t.branch_id, t.compensation_policy_id, t.is_active,
+                  COALESCE(j.assigned, 0)::integer AS assigned,
+                  COALESCE(j.completed, 0)::integer AS completed,
+                  COALESCE(j.cancelled, 0)::integer AS cancelled,
+                  COALESCE(j.active, 0)::integer AS active,
+                  COALESCE(j.on_time, 0)::integer AS on_time,
+                  COALESCE(j.avg_completion_minutes, 0)::numeric(10,1) AS avg_completion_minutes,
+                  COALESCE(r.avg_rating, 0)::numeric(3,2) AS avg_rating,
+                  COALESCE(r.rating_count, 0)::integer AS rating_count,
+                  COALESCE(s.total_payout, 0)::numeric(12,2) AS total_payout,
+                  COALESCE(s.pending_payout, 0)::numeric(12,2) AS pending_payout
+           FROM technicians t JOIN users u ON u.id = t.user_id
+           LEFT JOIN LATERAL (
+             SELECT COUNT(*) AS assigned,
+                    COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+                    COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+                    COUNT(*) FILTER (WHERE status IN ('scheduled','en_route','arrived','in_progress')) AS active,
+                    COUNT(*) FILTER (WHERE status = 'completed' AND completed_at <= scheduled_at + service_duration_minutes * interval '1 minute') AS on_time,
+                    AVG(EXTRACT(EPOCH FROM (completed_at - scheduled_at)) / 60) FILTER (WHERE status = 'completed') AS avg_completion_minutes
+             FROM service_jobs WHERE technician_id = t.id AND created_at >= $2 AND created_at < $3
+           ) j ON true
+           LEFT JOIN LATERAL (
+             SELECT AVG(score) FILTER (WHERE verified_service = true) AS avg_rating,
+                    COUNT(*) FILTER (WHERE verified_service = true) AS rating_count
+             FROM service_ratings WHERE technician_id = t.id AND created_at >= $2 AND created_at < $3
+           ) r ON true
+           LEFT JOIN LATERAL (
+             SELECT SUM(payout_amount) FILTER (WHERE status IN ('approved','paid')) AS total_payout,
+                    SUM(payout_amount) FILTER (WHERE status = 'pending_approval') AS pending_payout
+             FROM technician_settlements WHERE technician_id = t.id AND created_at >= $2 AND created_at < $3
+           ) s ON true
+           WHERE t.id = $1 LIMIT 1`,
+          [id, from, to]
+        );
+        return rows[0] || null;
+      },
+      async recentJobs(id, from, to, limit = 10) {
+        const { rows } = await db.query(
+          `SELECT j.id, j.status, j.scheduled_at, j.completed_at, j.service_duration_minutes,
+                  o.external_order_id, c.name AS customer_name, l.address_text
+           FROM service_jobs j
+           JOIN orders o ON o.id = j.order_id
+           JOIN customers c ON c.id = j.customer_id
+           LEFT JOIN service_locations l ON l.id = j.service_location_id
+           WHERE j.technician_id = $1 AND j.created_at >= $2 AND j.created_at < $3
+           ORDER BY COALESCE(j.completed_at, j.scheduled_at, j.created_at) DESC LIMIT $4`,
+          [id, from, to, limit]
+        );
+        return rows;
       }
     },
 
