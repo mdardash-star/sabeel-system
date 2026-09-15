@@ -34,6 +34,9 @@ OTP uses normalized Saudi E.164 mobile numbers (`+9665XXXXXXXX`), six-digit code
 - GET/POST `/jobs`
 - GET `/jobs?status=all|open|pending_assignment|scheduled|active|overdue|completed|cancelled&q=&limit=20&offset=0` — operations worklist ordered by assignment and SLA urgency
 - GET `/jobs/stats` — open, unassigned, scheduled, active, overdue and completed-today counters
+- GET `/jobs/:id/candidates?from=<ISO>&to=<ISO>&limit=10` — eligible technicians ranked by distance, workload and rating
+- POST `/jobs/:id/assign` — validates city, skill, availability and schedule conflicts before audited assignment
+- POST `/jobs/:id/reassign` — requires a reason and preserves the previous assignment in the audit log
 - GET/PATCH `/jobs/:id`
 - POST `/jobs/:id/assign`
 - POST `/jobs/:id/schedule`
