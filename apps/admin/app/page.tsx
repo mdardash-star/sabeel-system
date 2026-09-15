@@ -83,7 +83,7 @@ export default function Dashboard() {
         <nav className="nav" aria-label="التنقل الرئيسي">
           <p className="nav-label">القائمة الرئيسية</p>
           {navItems.map((item) => (
-            <a className={`nav-item${item.active ? " active" : ""}`} href={item.icon === "orders" ? "/jobs" : item.icon === "customers" ? "/customers" : item.icon === "calendar" ? "/maintenance" : "#"} key={item.label}>
+            <a className={`nav-item${item.active ? " active" : ""}`} href={item.icon === "orders" ? "/jobs" : item.icon === "customers" ? "/customers" : item.icon === "tech" ? "/technicians" : item.icon === "calendar" ? "/maintenance" : "#"} key={item.label}>
               <Icon name={item.icon} /><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}
             </a>
           ))}
@@ -135,7 +135,7 @@ export default function Dashboard() {
             </article>
 
             <article className="panel team-panel">
-              <div className="panel-head"><div><h2>الفنيون اليوم</h2><p>حالة الفريق الميداني</p></div><a href="#">عرض الكل</a></div>
+              <div className="panel-head"><div><h2>الفنيون اليوم</h2><p>حالة الفريق الميداني</p></div><a href="/technicians">عرض الكل</a></div>
               <div className="team-list">{technicians.map((tech) => <div className="tech-row" key={tech.name}>
                 <div className={`tech-avatar ${tech.color}`}>{tech.initials}</div>
                 <div className="tech-info"><strong>{tech.name}</strong><span>★ {tech.score} · {tech.tasks}</span></div>
