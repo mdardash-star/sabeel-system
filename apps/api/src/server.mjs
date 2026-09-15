@@ -15,6 +15,8 @@ export function createRequestHandler({ db = null } = {}) {
         userId,
         from: requestUrl.searchParams.get('from') || undefined,
         to: requestUrl.searchParams.get('to') || undefined,
+        limit: requestUrl.searchParams.get('limit') || undefined,
+        offset: requestUrl.searchParams.get('offset') || undefined,
         jobs: []
       };
 
@@ -37,7 +39,10 @@ export function createApiServer({ db = createDatabase() } = {}) {
 }
 
 function isPersistentRoute(method, pathname) {
-  return method === 'GET' && /^\/api\/v1\/technicians\/me\/jobs(?:\/[^/]+)?$/.test(pathname);
+  return method === 'GET' && (
+    /^\/api\/v1\/technicians\/me\/jobs(?:\/[^/]+)?$/.test(pathname) ||
+    pathname === '/api/v1/technicians/me/wallet'
+  );
 }
 
 function sendJson(res, status, data) {

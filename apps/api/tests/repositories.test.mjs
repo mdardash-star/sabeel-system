@@ -89,6 +89,19 @@ test('wallet credit is idempotent by settlement key', async () => {
   assert.equal(entry.amount, '60.00');
 });
 
+test('technician wallet entries are scoped ordered and paginated', async () => {
+  const repos = createRepositories(fakeDb((sql, params) => {
+    assert.match(sql, /WHERE technician_id = \$1/);
+    assert.match(sql, /ORDER BY created_at DESC, id DESC/);
+    assert.match(sql, /LIMIT \$2 OFFSET \$3/);
+    assert.deepEqual(params, ['tech-1', 25, 50]);
+    return { rows: [{ id: 'w1', amount: '75.00', currency: 'SAR', total_count: 51 }] };
+  }));
+  const entries = await repos.wallet.listForTechnician('tech-1', { limit: 25, offset: 50 });
+  assert.equal(entries[0].id, 'w1');
+  assert.equal(entries[0].total_count, 51);
+});
+
 test('maintenance query returns active assets due before timestamp', async () => {
   const repos = createRepositories(fakeDb((sql, params) => {
     assert.match(sql, /status = 'active'/);
