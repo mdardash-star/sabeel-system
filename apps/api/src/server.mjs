@@ -103,6 +103,8 @@ function isPersistentRoute(method, pathname) {
   if (method === 'GET') {
     return pathname === '/api/v1/maintenance/stats' || pathname === '/api/v1/maintenance/assets' ||
       pathname === '/api/v1/jobs/stats' || pathname === '/api/v1/jobs' ||
+      pathname === '/api/v1/technicians/stats' || pathname === '/api/v1/technicians' ||
+      /^\/api\/v1\/technicians\/[^/]+\/performance$/.test(pathname) ||
       /^\/api\/v1\/jobs\/[^/]+\/candidates$/.test(pathname) ||
       /^\/api\/v1\/customers(?:\/[^/]+)?(?:\/(?:timeline|addresses|assets|orders|jobs))?$/.test(pathname) ||
       /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+\/history$/.test(pathname) ||
@@ -118,6 +120,7 @@ function isPersistentRoute(method, pathname) {
   }
   return method === 'PATCH' && (/^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+$/.test(pathname) ||
+    /^\/api\/v1\/technicians\/[^/]+\/status$/.test(pathname) ||
     /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname));
 }
 
