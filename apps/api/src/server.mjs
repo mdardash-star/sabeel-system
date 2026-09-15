@@ -78,7 +78,7 @@ function isAuthRoute(method, pathname) {
 
 function isPersistentRoute(method, pathname) {
   if (method === 'GET') {
-    return /^\/api\/v1\/customers(?:\/[^/]+)?$/.test(pathname) ||
+    return /^\/api\/v1\/customers(?:\/[^/]+)?(?:\/timeline)?$/.test(pathname) ||
       /^\/api\/v1\/technicians\/me\/jobs(?:\/[^/]+)?$/.test(pathname) ||
       pathname === '/api/v1/technicians/me/wallet';
   }
