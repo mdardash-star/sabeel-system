@@ -6,6 +6,8 @@
     {"method": "GET", "path": "/customers/:id", "module": "crm"},
     {"method": "GET", "path": "/maintenance/stats", "module": "crm"},
     {"method": "GET", "path": "/maintenance/assets", "module": "crm"},
+    {"method": "GET", "path": "/jobs", "module": "field_service"},
+    {"method": "GET", "path": "/jobs/stats", "module": "field_service"},
     {"method": "POST", "path": "/integrations/woocommerce/orders", "module": "commerce_bridge", "idempotent": true},
     {"method": "GET", "path": "/technicians/me/jobs", "module": "field_service", "hideCustomerMobile": true},
     {"method": "PATCH", "path": "/jobs/:id/status", "module": "field_service", "audit": true},
