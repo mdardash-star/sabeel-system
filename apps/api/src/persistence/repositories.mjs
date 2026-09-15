@@ -119,6 +119,17 @@ export function createRepositories(db) {
         );
         return rows[0] || null;
       },
+      async addAsset(customerId, { productId, serialNumber, installedAt, warrantyEndsAt, maintenanceIntervalMonths, nextMaintenanceAt }) {
+        const { rows } = await db.query(
+          `INSERT INTO installed_assets
+             (customer_id, product_id, serial_number, installed_at, warranty_ends_at, maintenance_interval_months, next_maintenance_at)
+           SELECT id, $2, $3, $4, $5, $6, $7 FROM customers WHERE id = $1
+           RETURNING id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
+                     maintenance_interval_months, next_maintenance_at, status, created_at`,
+          [customerId, productId, serialNumber, installedAt, warrantyEndsAt, maintenanceIntervalMonths, nextMaintenanceAt]
+        );
+        return rows[0] || null;
+      },
       async listAddresses(customerId, { limit = 20, offset = 0 } = {}) {
         const { rows } = await db.query(
           `SELECT id, customer_id, city_id, address_text, latitude, longitude, created_at,
