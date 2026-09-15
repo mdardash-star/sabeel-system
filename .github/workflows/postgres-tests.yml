@@ -29,14 +29,23 @@ jobs:
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/002_webhook_deliveries.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/003_dispatch_capabilities.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/004_technician_location.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/005_dispatch_scheduling.sql
       - name: Test core schema
         run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/tests/core-schema.sql
-      - name: Verify dispatch and location schema
+      - name: Verify dispatch schema
         run: |
-          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT required_skill_code FROM service_jobs LIMIT 0;"
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT required_skill_code, service_duration_minutes FROM service_jobs LIMIT 0;"
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, skill_code FROM technician_skills LIMIT 0;"
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, available_from, available_to FROM technician_availability LIMIT 0;"
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, latitude, longitude, accuracy_meters, captured_at FROM technician_locations LIMIT 0;"
+          DEFAULT_DURATION=$(psql -h localhost -U subil -d subil_test -tAc "SELECT column_default FROM information_schema.columns WHERE table_name='service_jobs' AND column_name='service_duration_minutes';")
+          test "$DEFAULT_DURATION" = "60"
+      - name: Verify service duration constraints
+        run: |
+          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "UPDATE service_jobs SET service_duration_minutes=0;"; then
+            echo "Expected duration constraint to reject zero"
+            exit 1
+          fi
       - name: Verify technician coordinate constraints
         run: |
           U=$(psql -h localhost -U subil -d subil_test -tAc "INSERT INTO users(mobile,role) VALUES ('966500000099','technician') RETURNING id;" | head -n1 | tr -d '[:space:]')
@@ -54,6 +63,7 @@ jobs:
           if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"; then exit 1; else exit 0; fi
       - name: Roll back migrations
         run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/005_dispatch_scheduling.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/004_technician_location.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/003_dispatch_capabilities.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/002_webhook_deliveries.down.sql
