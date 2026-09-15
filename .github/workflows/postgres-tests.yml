@@ -28,17 +28,24 @@ jobs:
         run: |
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/002_webhook_deliveries.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/003_dispatch_capabilities.sql
       - name: Test core schema
         run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/tests/core-schema.sql
+      - name: Verify dispatch capability schema
+        run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT required_skill_code FROM service_jobs LIMIT 0;"
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, skill_code FROM technician_skills LIMIT 0;"
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, available_from, available_to FROM technician_availability LIMIT 0;"
       - name: Verify webhook replay table
         run: |
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"
           if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"; then exit 1; else exit 0; fi
       - name: Roll back migrations
         run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/003_dispatch_capabilities.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/002_webhook_deliveries.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.down.sql
       - name: Verify rollback
         run: |
-          COUNT=$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','customers','service_jobs','technician_settlements','wallet_entries','installed_assets','webhook_deliveries');")
+          COUNT=$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','customers','service_jobs','technician_settlements','wallet_entries','installed_assets','webhook_deliveries','technician_skills','technician_availability');")
           test "$COUNT" = "0"
