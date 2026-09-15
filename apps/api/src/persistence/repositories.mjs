@@ -76,6 +76,32 @@ export function createRepositories(db) {
           throw error;
         } finally { client.release(); }
       },
+      async update(id, { name, mobile }) {
+        if (!db.connect) throw new Error('Database transaction support is required');
+        const client = await db.connect();
+        try {
+          await client.query('BEGIN');
+          const current = await client.query(
+            `SELECT c.id, c.user_id, c.name, u.mobile FROM customers c
+             LEFT JOIN users u ON u.id = c.user_id WHERE c.id = $1 FOR UPDATE OF c`, [id]
+          );
+          if (!current.rows[0]) { await client.query('ROLLBACK'); return null; }
+          const customer = current.rows[0];
+          if (mobile && customer.user_id) {
+            await client.query('UPDATE users SET mobile = $2, updated_at = now() WHERE id = $1', [customer.user_id, mobile]);
+          }
+          const updated = await client.query(
+            'UPDATE customers SET name = COALESCE($2, name), updated_at = now() WHERE id = $1 RETURNING id, name, created_at, updated_at',
+            [id, name || null]
+          );
+          await client.query('COMMIT');
+          return { ...updated.rows[0], mobile: mobile || customer.mobile };
+        } catch (error) {
+          await client.query('ROLLBACK');
+          if (error.code === '23505') throw new Error('Customer mobile already exists');
+          throw error;
+        } finally { client.release(); }
+      },
       async findByIdentity(source, identityKey) {
         const { rows } = await db.query(
           `SELECT c.* FROM customers c
