@@ -7,9 +7,14 @@ import { authenticateBearer } from './auth/session-auth.mjs';
 import { routeAuthRequest } from './http/auth-router.mjs';
 import { createOtpSender } from './integrations/otp-sender.mjs';
 
-export function createRequestHandler({ db = null, auth = {} } = {}) {
+export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } = {}) {
   return async function handleRequest(req, res) {
     try {
+      const corsAllowed = applyCors(req, res, corsOrigins);
+      if (!corsAllowed) return sendJson(res, 403, { error: 'origin_not_allowed' });
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204); return res.end();
+      }
       const requestUrl = new URL(req.url, 'http://subil.local');
       const body = await readJson(req);
       const authRoute = isAuthRoute(req.method, requestUrl.pathname);
@@ -58,13 +63,29 @@ export function createRequestHandler({ db = null, auth = {} } = {}) {
   };
 }
 
-export function createApiServer({ db = createDatabase(), auth = {} } = {}) {
+export function createApiServer({ db = createDatabase(), auth = {}, corsOrigins = parseCorsOrigins(process.env.SUBIL_ADMIN_ORIGINS) } = {}) {
   const runtimeAuth = {
     hashSecret: process.env.OTP_HASH_SECRET,
     sendOtp: createOtpSender(),
     ...auth
   };
-  return http.createServer(createRequestHandler({ db, auth: runtimeAuth }));
+  return http.createServer(createRequestHandler({ db, auth: runtimeAuth, corsOrigins }));
+}
+
+function parseCorsOrigins(value) {
+  return String(value || '').split(',').map(origin => origin.trim()).filter(Boolean);
+}
+
+function applyCors(req, res, allowedOrigins) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  if (!allowedOrigins.includes(origin)) return false;
+  res.setHeader('vary', 'Origin');
+  res.setHeader('access-control-allow-origin', origin);
+  res.setHeader('access-control-allow-methods', 'GET, POST, PATCH, OPTIONS');
+  res.setHeader('access-control-allow-headers', 'Authorization, Content-Type');
+  res.setHeader('access-control-max-age', '600');
+  return true;
 }
 
 function isAuthRoute(method, pathname) {
