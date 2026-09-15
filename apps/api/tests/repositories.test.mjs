@@ -55,6 +55,20 @@ test('technician jobs expose operational location but never query customer conta
   assert.equal('whatsapp' in jobs[0], false);
 });
 
+test('technician job details are scoped by both job and technician without customer contact data', async () => {
+  const repos = createRepositories(fakeDb((sql, params) => {
+    assert.match(sql, /j\.id = \$1 AND j\.technician_id = \$2/);
+    assert.match(sql, /l\.address_text/);
+    assert.doesNotMatch(sql, /JOIN customers/i);
+    assert.doesNotMatch(sql, /\bmobile\b|\bphone\b|whatsapp/i);
+    assert.deepEqual(params, ['job-1', 'tech-1']);
+    return { rows: [{ id: 'job-1', technician_id: 'tech-1', address_text: 'Riyadh' }] };
+  }));
+  const job = await repos.jobs.findForTechnician('job-1', 'tech-1');
+  assert.equal(job.id, 'job-1');
+  assert.equal('customer_id' in job, false);
+});
+
 test('settlement approval only changes pending settlement', async () => {
   const repos = createRepositories(fakeDb((sql, params) => {
     assert.match(sql, /status = 'pending_approval'/);

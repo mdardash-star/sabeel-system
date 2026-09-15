@@ -49,6 +49,22 @@ export function createRepositories(db) {
         );
         return rows;
       },
+      async findForTechnician(id, technicianId) {
+        const { rows } = await db.query(
+          `SELECT j.id, j.order_id, j.service_location_id, j.city_id, j.technician_id,
+                  j.status, j.scheduled_at, j.service_duration_minutes, j.required_skill_code,
+                  j.completed_at, j.created_at, j.updated_at,
+                  o.external_source, o.external_order_id,
+                  l.address_text, l.latitude, l.longitude
+           FROM service_jobs j
+           JOIN orders o ON o.id = j.order_id
+           LEFT JOIN service_locations l ON l.id = j.service_location_id
+           WHERE j.id = $1 AND j.technician_id = $2
+           LIMIT 1`,
+          [id, technicianId]
+        );
+        return rows[0] || null;
+      },
       async updateStatus(id, status, completedAt = null) {
         const { rows } = await db.query(
           `UPDATE service_jobs SET status = $2, completed_at = COALESCE($3, completed_at), updated_at = now()

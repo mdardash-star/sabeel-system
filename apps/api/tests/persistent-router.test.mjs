@@ -51,3 +51,31 @@ test('non-technician cannot use technician jobs endpoint', async () => {
   const result = await routePersistentRequest({ method: 'GET', url: '/api/v1/technicians/me/jobs', role: 'customer', context: { userId: 'user-1' }, db: dbReturning([]) });
   assert.equal(result.status, 403);
 });
+
+test('technician can read assigned job details', async () => {
+  const db = technicianDb([{ id: 'job-1', technician_id: 'tech-1', address_text: 'Riyadh' }], (sql, params) => {
+    assert.match(sql, /j\.id = \$1 AND j\.technician_id = \$2/);
+    assert.deepEqual(params, ['job-1', 'tech-1']);
+  });
+  const result = await routePersistentRequest({
+    method: 'GET',
+    url: '/api/v1/technicians/me/jobs/job-1',
+    role: 'technician',
+    context: { userId: 'user-1' },
+    db
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.job.id, 'job-1');
+});
+
+test('another technicians job is indistinguishable from a missing job', async () => {
+  const result = await routePersistentRequest({
+    method: 'GET',
+    url: '/api/v1/technicians/me/jobs/job-2',
+    role: 'technician',
+    context: { userId: 'user-1' },
+    db: technicianDb([])
+  });
+  assert.equal(result.status, 404);
+  assert.equal(result.data.error, 'job_not_found');
+});
