@@ -10,6 +10,8 @@ Persistent application routes require `Authorization: Bearer <session-token>`. T
 - POST `/auth/logout`
 - GET `/me`
 
+OTP uses normalized Saudi E.164 mobile numbers (`+9665XXXXXXXX`), six-digit codes, a five-minute expiry, a one-minute resend cooldown, and five verification attempts. Codes are stored only as keyed hashes. Successful verification consumes the challenge and creates a hashed 30-day session. Unknown mobile numbers create a customer identity automatically; inactive users remain blocked. The SMS provider is configured through `OTP_SENDER_URL` and `OTP_SENDER_API_KEY`.
+
 ## Customers / CRM
 - GET/POST `/customers`
 - GET/PATCH `/customers/:id`
