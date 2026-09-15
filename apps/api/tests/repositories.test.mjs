@@ -6,6 +6,19 @@ function fakeDb(handler) {
   return { query: async (sql, params) => handler(sql, params) };
 }
 
+test('technician repository resolves only active profiles from active users', async () => {
+  const repos = createRepositories(fakeDb((sql, params) => {
+    assert.match(sql, /FROM technicians t/);
+    assert.match(sql, /JOIN users u/);
+    assert.match(sql, /t\.is_active = true/);
+    assert.match(sql, /u\.is_active = true/);
+    assert.deepEqual(params, ['user-1']);
+    return { rows: [{ id: 'tech-1', user_id: 'user-1' }] };
+  }));
+  const technician = await repos.technicians.findActiveByUserId('user-1');
+  assert.equal(technician.id, 'tech-1');
+});
+
 test('customer repository resolves external identity with parameters', async () => {
   const calls = [];
   const repos = createRepositories(fakeDb((sql, params) => {

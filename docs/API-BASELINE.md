@@ -34,9 +34,11 @@ Base prefix: `/api/v1`
 - POST `/jobs/:id/rating`
 
 ## Technician
-- GET `/technician/me/schedule`
-- GET `/technician/me/jobs/:id`
-- GET `/technician/me/wallet`
+- GET `/technicians/me/jobs?from=<ISO>&to=<ISO>`
+- GET `/technicians/me/jobs/:id`
+- GET `/technicians/me/wallet`
+
+The signed-in user is resolved to an active technician profile server-side. Job lists are read from PostgreSQL and expose operational location fields only; customer contact fields are never selected.
 
 ## Assets / Maintenance
 - GET/POST `/assets`

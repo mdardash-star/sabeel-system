@@ -7,13 +7,16 @@ export async function routePersistentRequest({ method, url, role, context = {}, 
   if (method === 'GET' && url === '/api/v1/technicians/me/jobs') {
     if (!can(role, 'jobs:assigned:read')) return response(403, { error: 'forbidden' });
     if (role !== 'technician') return response(403, { error: 'forbidden' });
-    if (!context.technicianId) return response(401, { error: 'technician_identity_required' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
 
     const from = context.from || startOfUtcDay(new Date());
     const to = context.to || addUtcDays(from, 1);
     const repos = createRepositories(db);
-    const jobs = await repos.jobs.listForTechnician(context.technicianId, from, to);
-    return response(200, { technicianId: context.technicianId, from, to, jobs });
+    const technician = await repos.technicians.findActiveByUserId(context.userId);
+    if (!technician) return response(403, { error: 'active_technician_required' });
+
+    const jobs = await repos.jobs.listForTechnician(technician.id, from, to);
+    return response(200, { technicianId: technician.id, from, to, jobs });
   }
 
   return response(404, { error: 'not_found' });

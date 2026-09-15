@@ -2,6 +2,20 @@ export function createRepositories(db) {
   if (!db?.query) throw new Error('Database client with query() is required');
 
   return {
+    technicians: {
+      async findActiveByUserId(userId) {
+        const { rows } = await db.query(
+          `SELECT t.id, t.user_id, t.city_id, t.branch_id
+           FROM technicians t
+           JOIN users u ON u.id = t.user_id
+           WHERE t.user_id = $1 AND t.is_active = true AND u.is_active = true
+           LIMIT 1`,
+          [userId]
+        );
+        return rows[0] || null;
+      }
+    },
+
     customers: {
       async findByIdentity(source, identityKey) {
         const { rows } = await db.query(
