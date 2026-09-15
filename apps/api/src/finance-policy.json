@@ -1,0 +1,19 @@
+{
+  "currency": "SAR",
+  "vatRate": 0.15,
+  "marginBasis": "pre_vat",
+  "technician": {
+    "modes": ["fixed_per_job", "margin_percentage"],
+    "defaultMode": "margin_percentage",
+    "startingPercentage": 30,
+    "progressionPercentagePoints": 5,
+    "performancePeriodMonths": 2,
+    "dailyCompletedJobsTarget": 10,
+    "maximumPercentage": 50
+  },
+  "settlement": {
+    "storeSourceInputs": true,
+    "storePolicyVersion": true,
+    "requiresApproval": true
+  }
+}
