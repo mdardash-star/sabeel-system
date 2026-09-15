@@ -46,11 +46,12 @@ test('duplicate customer mobile rolls back and returns conflict', async () => {
   assert.deepEqual(calls.slice(-2),['ROLLBACK','RELEASE']);
 });
 
-test('customer details return CRM aggregates to authorized role', async () => {
-  const db={query:async(sql,params)=>{assert.match(sql,/installed_assets/);assert.deepEqual(params,['c1']);return {rows:[{id:'c1',name:'محمد',addresses:[],assets:[],orders:[]}]};}};
+test('customer details return a lightweight CRM summary to authorized role', async () => {
+  const db={query:async(sql,params)=>{assert.match(sql,/order_total_ex_vat/);assert.doesNotMatch(sql,/json_agg/);assert.deepEqual(params,['c1']);return {rows:[{id:'c1',name:'محمد',order_count:2,order_total_ex_vat:'2070'}]};}};
   const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/c1',role:'admin',db});
   assert.equal(result.status,200);
   assert.equal(result.data.customer.id,'c1');
+  assert.equal(result.data.customer.order_count,2);
 });
 
 test('support updates customer name and mobile atomically', async () => {
@@ -83,9 +84,9 @@ test('support reads an ordered customer timeline', async () => {
   assert.equal(result.data.timeline[0].type,'order');
 });
 
-for (const collection of ['addresses','assets']) {
+for (const collection of ['addresses','assets','orders']) {
   test(`support reads paginated customer ${collection}`, async () => {
-    const db={query:async(sql,params)=>{if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1'}]};assert.match(sql,collection==='addresses'?/FROM service_locations/:/FROM installed_assets/);assert.deepEqual(params,['c1',5,10]);return{rows:[{id:`${collection}-1`,total_count:12}]};}};
+    const db={query:async(sql,params)=>{if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1'}]};const matcher={addresses:/FROM service_locations/,assets:/FROM installed_assets/,orders:/FROM orders WHERE/}[collection];assert.match(sql,matcher);assert.deepEqual(params,['c1',5,10]);return{rows:[{id:`${collection}-1`,total_count:12}]};}};
     const result=await routePersistentRequest({method:'GET',url:`/api/v1/customers/c1/${collection}`,role:'branch_manager',context:{limit:'5',offset:'10'},db});
     assert.equal(result.status,200);
     assert.equal(result.data[collection][0].id,`${collection}-1`);
