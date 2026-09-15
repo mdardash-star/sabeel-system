@@ -100,11 +100,13 @@ function isAuthRoute(method, pathname) {
 function isPersistentRoute(method, pathname) {
   if (method === 'GET') {
     return /^\/api\/v1\/customers(?:\/[^/]+)?(?:\/(?:timeline|addresses|assets|orders))?$/.test(pathname) ||
+      /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+\/history$/.test(pathname) ||
       /^\/api\/v1\/technicians\/me\/jobs(?:\/[^/]+)?$/.test(pathname) ||
       pathname === '/api/v1/technicians/me/wallet';
   }
   if (method === 'POST') {
     return pathname === '/api/v1/customers' || /^\/api\/v1\/customers\/[^/]+\/(?:addresses|assets)$/.test(pathname) ||
+      /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+\/maintenance$/.test(pathname) ||
       /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
       /^\/api\/v1\/settlements\/[^/]+\/approve$/.test(pathname);
   }
