@@ -104,15 +104,26 @@ test('support reads a paginated customer timeline including asset maintenance', 
   assert.deepEqual(result.data.pagination,{limit:25,offset:10,total:37});
 });
 
-for (const collection of ['addresses','assets','orders']) {
+for (const collection of ['addresses','assets','orders','jobs']) {
   test(`support reads paginated customer ${collection}`, async () => {
-    const db={query:async(sql,params)=>{if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1'}]};const matcher={addresses:/FROM service_locations/,assets:/FROM installed_assets/,orders:/FROM orders WHERE/}[collection];assert.match(sql,matcher);assert.deepEqual(params,['c1',5,10]);return{rows:[{id:`${collection}-1`,total_count:12}]};}};
+    const db={query:async(sql,params)=>{if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1'}]};const matcher={addresses:/FROM service_locations/,assets:/FROM installed_assets/,orders:/FROM orders WHERE/,jobs:/FROM service_jobs/}[collection];assert.match(sql,matcher);assert.deepEqual(params,['c1',5,10]);return{rows:[{id:`${collection}-1`,rating_score:5,total_count:12}]};}};
     const result=await routePersistentRequest({method:'GET',url:`/api/v1/customers/c1/${collection}`,role:'branch_manager',context:{limit:'5',offset:'10'},db});
     assert.equal(result.status,200);
     assert.equal(result.data[collection][0].id,`${collection}-1`);
     assert.deepEqual(result.data.pagination,{limit:5,offset:10,total:12});
   });
 }
+
+test('customer service history joins order, location and verified rating',async()=>{
+  const db={query:async(sql,params)=>{
+    if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1'}]};
+    assert.match(sql,/JOIN orders/);assert.match(sql,/LEFT JOIN service_locations/);assert.match(sql,/LEFT JOIN service_ratings/);
+    assert.deepEqual(params,['c1',10,0]);return{rows:[{id:'job-1',external_order_id:'1048',status:'completed',rating_score:5,total_count:1}]};
+  }};
+  const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/c1/jobs',role:'support',context:{limit:'10'},db});
+  assert.equal(result.status,200);assert.equal(result.data.jobs[0].rating_score,5);
+  assert.deepEqual(result.data.pagination,{limit:10,offset:0,total:1});
+});
 
 test('support reads paginated maintenance history for an owned asset',async()=>{
   const db={query:async(sql,params)=>{
