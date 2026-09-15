@@ -147,6 +147,30 @@ test('live HTTP operations jobs forward search status and pagination',async(t)=>
   const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.jobs[0].status,'in_progress');assert.deepEqual(payload.pagination,{limit:5,offset:10,total:7});
 });
 
+test('live HTTP technician roster forwards filters and pagination',async(t)=>{
+  const db={query:async(sql,params)=>{assert.match(sql,/on_time_30d/);assert.deepEqual(params,['الرياض','active',5,10]);return{rows:[{id:'tech-1',mobile:'+966500000001',is_active:true,total_count:12}]};}};
+  const server=createApiServer({db:withSession(db,{role:'dispatcher'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/technicians?status=active&q=${encodeURIComponent('الرياض')}&limit=5&offset=10`,{headers:authHeaders});
+  const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.technicians[0].id,'tech-1');assert.deepEqual(payload.pagination,{limit:5,offset:10,total:12});
+});
+
+test('live HTTP technician performance returns metrics and recent jobs',async(t)=>{
+  const db={query:async(sql)=>/FROM technicians t JOIN users/.test(sql)?{rows:[{id:'tech-1',completed:20,on_time:18}]}:{rows:[{id:'job-1',status:'completed'}]}};
+  const server=createApiServer({db:withSession(db,{role:'dispatcher'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/technicians/tech-1/performance?from=2026-08-01&to=2026-09-01`,{headers:authHeaders});
+  const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.technician.completed,20);assert.equal(payload.recentJobs[0].id,'job-1');
+});
+
+test('live HTTP manager deactivates a technician with audited reason',async(t)=>{
+  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/FROM technicians t JOIN users/.test(sql))return{rows:[{id:'tech-1',user_id:'user-1',is_active:true}]};if(/UPDATE technicians/.test(sql))return{rows:[{id:'tech-1',is_active:params[1]}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
+  const db={query:async()=>({rows:[]}),connect:async()=>client};const server=createApiServer({db:withSession(db,{role:'branch_manager',userId:'manager-1'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/technicians/tech-1/status`,{method:'PATCH',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({isActive:false,reason:'إجازة طويلة'})});
+  assert.equal(response.status,200);assert.equal((await response.json()).technician.is_active,false);
+});
+
 test('live HTTP dispatcher candidate route ranks eligible technicians',async(t)=>{
   const db={query:async(sql)=>{if(/FROM service_jobs j LEFT JOIN service_locations/.test(sql))return{rows:[{id:'job-1',city_id:'riyadh',status:'pending_assignment',scheduled_at:'2026-09-20T09:00:00Z',service_duration_minutes:60}]};if(/FROM technicians t/.test(sql))return{rows:[{technician_id:'tech-1',distance_km:'1.5',jobs_in_window:0,avg_rating:'4.9'}]};throw new Error('unexpected query');}};
   const server=createApiServer({db:withSession(db,{role:'dispatcher',userId:'dispatcher-1'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
