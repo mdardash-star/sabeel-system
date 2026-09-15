@@ -34,9 +34,26 @@ export default function CustomerDetails(){
     if(!apiBase)return;
     const controller=new AbortController(),token=sessionStorage.getItem("subil_session");
     const headers={Authorization:`Bearer ${token}`};
-    Promise.all([fetch(`${apiBase}/api/v1/customers/${encodeURIComponent(id)}`,{headers,signal:controller.signal}),fetch(`${apiBase}/api/v1/customers/${encodeURIComponent(id)}/timeline`,{headers,signal:controller.signal})])
-      .then(async([details,history])=>{if(!details.ok)throw new Error(details.status===404?"لم يتم العثور على العميل.":details.status===401?"انتهت جلسة الدخول. سجل الدخول مجددًا.":"تعذر تحميل بيانات العميل.");const [payload,timelinePayload]=await Promise.all([details.json(),history.ok?history.json():Promise.resolve({timeline:[]})]);return{payload,timelinePayload};})
-      .then(({payload,timelinePayload})=>{setCustomer({...payload.customer,addresses:payload.customer.addresses||[],assets:payload.customer.assets||[],orders:payload.customer.orders||[]});setTimeline(timelinePayload.timeline||[]);})
+    const customerPath=`${apiBase}/api/v1/customers/${encodeURIComponent(id)}`;
+    Promise.all([
+      fetch(customerPath,{headers,signal:controller.signal}),
+      fetch(`${customerPath}/timeline`,{headers,signal:controller.signal}),
+      fetch(`${customerPath}/addresses?limit=100`,{headers,signal:controller.signal}),
+      fetch(`${customerPath}/assets?limit=100`,{headers,signal:controller.signal})
+    ])
+      .then(async([details,history,addresses,assets])=>{
+        if(!details.ok)throw new Error(details.status===404?"لم يتم العثور على العميل.":details.status===401?"انتهت جلسة الدخول. سجل الدخول مجددًا.":"تعذر تحميل بيانات العميل.");
+        const [payload,timelinePayload,addressPayload,assetPayload]=await Promise.all([
+          details.json(),history.ok?history.json():Promise.resolve({timeline:[]}),
+          addresses.ok?addresses.json():Promise.resolve({addresses:null}),
+          assets.ok?assets.json():Promise.resolve({assets:null})
+        ]);
+        return{payload,timelinePayload,addressPayload,assetPayload};
+      })
+      .then(({payload,timelinePayload,addressPayload,assetPayload})=>{
+        setCustomer({...payload.customer,addresses:addressPayload.addresses??payload.customer.addresses??[],assets:assetPayload.assets??payload.customer.assets??[],orders:payload.customer.orders||[]});
+        setTimeline(timelinePayload.timeline||[]);
+      })
       .catch((reason:unknown)=>{if(reason instanceof DOMException&&reason.name==="AbortError")return;setError(reason instanceof Error?reason.message:"تعذر تحميل بيانات العميل.");})
       .finally(()=>setLoading(false));
     return()=>controller.abort();
