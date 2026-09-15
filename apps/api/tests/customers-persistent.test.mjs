@@ -69,3 +69,10 @@ test('support adds an address only to an existing customer', async () => {
   assert.equal(result.status,201);
   assert.equal(result.data.address.id,'a1');
 });
+
+test('support reads an ordered customer timeline', async () => {
+  const db={query:async(sql,params)=>{if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1'}]};assert.match(sql,/UNION ALL/);assert.match(sql,/ORDER BY occurred_at DESC/);assert.deepEqual(params,['c1',25]);return{rows:[{type:'order',id:'o1',status:'paid'}]};}};
+  const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/c1/timeline',role:'support',context:{limit:'25'},db});
+  assert.equal(result.status,200);
+  assert.equal(result.data.timeline[0].type,'order');
+});
