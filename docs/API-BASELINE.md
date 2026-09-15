@@ -49,6 +49,10 @@ OTP uses normalized Saudi E.164 mobile numbers (`+9665XXXXXXXX`), six-digit code
 - POST `/jobs/:id/rating`
 
 ## Technician
+- GET `/technicians?status=all|active|inactive&q=&limit=20&offset=0` — operations roster with skills, current workload, 30-day completion, punctuality and verified rating metrics
+- GET `/technicians/stats` — total, active, inactive, available-now, busy-now and verified-rating counters
+- GET `/technicians/:id/performance?from=<ISO>&to=<ISO>` — bounded performance, payout totals and ten most recent jobs; defaults to 30 days and allows up to 366 days
+- PATCH `/technicians/:id/status` — branch-manager/admin activation or reason-required deactivation with an audit record
 - GET `/technicians/me/jobs?from=<ISO>&to=<ISO>`
 - GET `/technicians/me/jobs/:id` — returns the assigned job only; another technician's job returns `404`
 - PATCH `/technicians/me/jobs/:id/status` — persists a valid technician workflow transition and audit event; completion uses the evidence endpoint
