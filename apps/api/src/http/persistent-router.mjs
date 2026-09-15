@@ -5,6 +5,41 @@ import { approveSettlementAndCreditWallet, completeTechnicianJob, transitionTech
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
 
+  if (method === 'GET' && url === '/api/v1/customers') {
+    if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const repos = createRepositories(db);
+    const rows = await repos.customers.list({ ...pagination, query: context.query || '' });
+    return response(200, {
+      customers: rows.map(({ total_count, ...customer }) => customer),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 }
+    });
+  }
+
+  if (method === 'POST' && url === '/api/v1/customers') {
+    if (!can(role, 'customers:create')) return response(403, { error: 'forbidden' });
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    const mobile = normalizeSaudiMobile(body.mobile);
+    if (name.length < 2 || !mobile) return response(400, { error: 'invalid_customer' });
+    try {
+      const customer = await createRepositories(db).customers.create({
+        name, mobile, cityId: cleanOptional(body.cityId), addressText: cleanOptional(body.addressText)
+      });
+      return response(201, { customer });
+    } catch (error) {
+      if (error.message === 'Customer mobile already exists') return response(409, { error: 'mobile_already_exists' });
+      throw error;
+    }
+  }
+
+  const customerMatch = url.match(/^\/api\/v1\/customers\/([^/]+)$/);
+  if (method === 'GET' && customerMatch) {
+    if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
+    const customer = await createRepositories(db).customers.findDetails(customerMatch[1]);
+    return customer ? response(200, { customer }) : response(404, { error: 'customer_not_found' });
+  }
+
   const approveMatch = url.match(/^\/api\/v1\/settlements\/([^/]+)\/approve$/);
   if (method === 'POST' && approveMatch) {
     if (!can(role, 'settlements:approve')) return response(403, { error: 'forbidden' });
@@ -127,6 +162,17 @@ function parsePagination(context) {
   if (!Number.isInteger(offset) || offset < 0) return null;
   return { limit, offset };
 }
+
+function normalizeSaudiMobile(value) {
+  if (typeof value !== 'string') return null;
+  const digits = value.replace(/\D/g, '');
+  if (/^05\d{8}$/.test(digits)) return `+966${digits.slice(1)}`;
+  if (/^5\d{8}$/.test(digits)) return `+966${digits}`;
+  if (/^9665\d{8}$/.test(digits)) return `+${digits}`;
+  return null;
+}
+
+function cleanOptional(value) { return typeof value === 'string' ? value.trim().slice(0, 500) : ''; }
 
 async function resolveTechnician({ role, context, db }) {
   if (!can(role, 'jobs:assigned:read') || role !== 'technician') {
