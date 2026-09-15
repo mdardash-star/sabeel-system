@@ -111,6 +111,7 @@ function isPersistentRoute(method, pathname) {
       /^\/api\/v1\/settlements\/[^/]+\/approve$/.test(pathname);
   }
   return method === 'PATCH' && (/^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
+    /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname));
 }
 
