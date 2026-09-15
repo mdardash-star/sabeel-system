@@ -1,0 +1,16 @@
+BEGIN;
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS notification_events;
+DROP TABLE IF EXISTS service_ratings;
+DROP TABLE IF EXISTS installed_assets;
+DROP TABLE IF EXISTS wallet_entries;
+DROP TABLE IF EXISTS technician_settlements;
+DROP TABLE IF EXISTS job_evidence;
+DROP TABLE IF EXISTS service_jobs;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS technicians;
+DROP TABLE IF EXISTS service_locations;
+DROP TABLE IF EXISTS customer_external_identities;
+DROP TABLE IF EXISTS customers;
+DROP TABLE IF EXISTS users;
+COMMIT;
