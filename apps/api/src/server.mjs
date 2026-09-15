@@ -103,7 +103,9 @@ function isPersistentRoute(method, pathname) {
   if (method === 'GET') {
     return pathname === '/api/v1/maintenance/stats' || pathname === '/api/v1/maintenance/assets' ||
       pathname === '/api/v1/jobs/stats' || pathname === '/api/v1/jobs' ||
+      pathname === '/api/v1/jobs/escalations/stats' || pathname === '/api/v1/jobs/escalations' ||
       pathname === '/api/v1/technicians/stats' || pathname === '/api/v1/technicians' ||
+      pathname === '/api/v1/settlements/stats' || pathname === '/api/v1/settlements' ||
       /^\/api\/v1\/technicians\/[^/]+\/performance$/.test(pathname) ||
       /^\/api\/v1\/jobs\/[^/]+\/candidates$/.test(pathname) ||
       /^\/api\/v1\/customers(?:\/[^/]+)?(?:\/(?:timeline|addresses|assets|orders|jobs))?$/.test(pathname) ||
@@ -114,9 +116,10 @@ function isPersistentRoute(method, pathname) {
   if (method === 'POST') {
     return pathname === '/api/v1/customers' || /^\/api\/v1\/customers\/[^/]+\/(?:addresses|assets)$/.test(pathname) ||
       /^\/api\/v1\/jobs\/[^/]+\/(?:assign|reassign)$/.test(pathname) ||
+      pathname === '/api/v1/jobs/escalations/run' || /^\/api\/v1\/jobs\/[^/]+\/escalations\/resolve$/.test(pathname) ||
       /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+\/maintenance$/.test(pathname) ||
       /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
-      /^\/api\/v1\/settlements\/[^/]+\/approve$/.test(pathname);
+      /^\/api\/v1\/settlements\/[^/]+\/(?:approve|reject|paid)$/.test(pathname);
   }
   return method === 'PATCH' && (/^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+$/.test(pathname) ||
