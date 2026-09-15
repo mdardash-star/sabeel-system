@@ -152,6 +152,26 @@ test('live HTTP customer asset registration is authenticated and persisted',asyn
   assert.equal(payload.asset.id,'asset-1');
 });
 
+test('live HTTP maintenance completion updates an owned asset atomically',async(t)=>{
+  const client={query:async(sql,params)=>{
+    if(sql==='BEGIN'||sql==='COMMIT')return{rows:[]};
+    if(/FROM installed_assets/.test(sql))return{rows:[{id:'asset-1',customer_id:'customer-1',status:'active',maintenance_interval_months:6}]};
+    if(/UPDATE installed_assets/.test(sql))return{rows:[{id:'asset-1',last_maintenance_at:params[2],next_maintenance_at:params[3],status:'active'}]};
+    if(/INSERT INTO asset_maintenance_events/.test(sql))return{rows:[{id:'maintenance-1',asset_id:'asset-1',completed_at:params[1],notes:params[2]}]};
+    if(/INSERT INTO audit_log/.test(sql))return{rows:[]};
+    throw new Error('Unexpected query');
+  },release(){}};
+  const db={query:async()=>({rows:[]}),connect:async()=>client};
+  const server=createApiServer({db:withSession(db,{role:'support',userId:'support-1'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();
+  const response=await fetch(`http://127.0.0.1:${port}/api/v1/customers/customer-1/assets/asset-1/maintenance`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({completedAt:'2026-09-30',notes:'تم تغيير الفلاتر'})});
+  const payload=await response.json();
+  assert.equal(response.status,200);assert.equal(payload.maintenance.id,'maintenance-1');
+  assert.equal(payload.asset.next_maintenance_at,'2027-03-30T00:00:00.000Z');
+});
+
 test('live HTTP technician job details route is connected to PostgreSQL', async (t) => {
   const db = {
     query: async (sql, params) => {
