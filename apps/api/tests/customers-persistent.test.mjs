@@ -123,3 +123,9 @@ test('support reads paginated maintenance history for an owned asset',async()=>{
   assert.equal(result.status,200);assert.equal(result.data.maintenance[0].id,'maintenance-1');
   assert.deepEqual(result.data.pagination,{limit:10,offset:0,total:1});
 });
+
+test('asset status update validates state before database access',async()=>{
+  const db={query:async()=>{throw new Error('must not query');}};
+  const result=await routePersistentRequest({method:'PATCH',url:'/api/v1/customers/c1/assets/asset-1',role:'support',context:{userId:'support-1'},body:{status:'retired'},db});
+  assert.deepEqual(result,{status:400,data:{error:'invalid_asset_status'}});
+});
