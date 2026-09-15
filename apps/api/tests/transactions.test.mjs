@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { withTransaction, approveSettlementAndCreditWallet, completeTechnicianJob, transitionTechnicianJob } from '../src/persistence/transactions.mjs';
+import { withTransaction, approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, transitionTechnicianJob } from '../src/persistence/transactions.mjs';
 
 function poolWithClient(client) {
   return { connect: async () => client };
@@ -129,4 +129,22 @@ test('technician completion rejects evidence outside the job namespace', async (
     }),
     /Invalid evidence/
   );
+});
+
+test('asset maintenance updates schedule and records history and audit atomically', async () => {
+  const calls=[];
+  const client={query:async(sql,params)=>{
+    calls.push({sql,params});
+    if(sql==='BEGIN'||sql==='COMMIT')return{rows:[]};
+    if(/FROM installed_assets/.test(sql))return{rows:[{id:'asset-1',customer_id:'customer-1',status:'active',maintenance_interval_months:6}]};
+    if(/UPDATE installed_assets/.test(sql))return{rows:[{id:'asset-1',last_maintenance_at:params[2],next_maintenance_at:params[3],status:'active'}]};
+    if(/INSERT INTO asset_maintenance_events/.test(sql))return{rows:[{id:'maintenance-1',asset_id:'asset-1',completed_at:params[1],notes:params[2]}]};
+    if(/INSERT INTO audit_log/.test(sql))return{rows:[]};
+    throw new Error('Unexpected query');
+  },release(){calls.push({sql:'RELEASE'});}};
+  const result=await completeAssetMaintenance(poolWithClient(client),{customerId:'customer-1',assetId:'asset-1',actorUserId:'support-1',completedAt:'2026-09-30T00:00:00.000Z',notes:'تم تغيير الفلاتر'});
+  assert.equal(result.asset.next_maintenance_at,'2027-03-30T00:00:00.000Z');
+  assert.equal(result.maintenance.id,'maintenance-1');
+  assert.ok(calls.some(call=>/asset\.maintenance_completed/.test(call.sql)));
+  assert.ok(calls.some(call=>call.sql==='COMMIT'));
 });
