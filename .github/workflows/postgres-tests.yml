@@ -1,0 +1,32 @@
+name: PostgreSQL Tests
+on:
+  push:
+    branches: [persistence-postgres]
+  pull_request:
+    branches: [develop]
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: subil
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: subil_test
+        ports:
+          - 5432:5432
+    env:
+      PGPASSWORD: test_password
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for PostgreSQL
+        run: until pg_isready -h localhost -U subil -d subil_test; do sleep 2; done
+      - name: Apply migration
+        run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.sql
+      - name: Test schema
+        run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/tests/core-schema.sql
+      - name: Rollback migration
+        run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.down.sql
