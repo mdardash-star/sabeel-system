@@ -1,6 +1,6 @@
 import { can } from '../auth/rbac.mjs';
 import { createRepositories } from '../persistence/repositories.mjs';
-import { approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, transitionTechnicianJob } from '../persistence/transactions.mjs';
+import { approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, transitionTechnicianJob, updateAssetStatus } from '../persistence/transactions.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
@@ -131,6 +131,21 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       return result ? response(200, result) : response(404, { error: 'asset_not_found' });
     } catch (error) {
       if (error.message === 'Asset is not active') return response(409, { error: 'asset_not_active' });
+      throw error;
+    }
+  }
+  const assetStatusMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/assets\/([^/]+)$/);
+  if (method === 'PATCH' && assetStatusMatch) {
+    if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    if (!['active', 'inactive'].includes(body.status)) return response(400, { error: 'invalid_asset_status' });
+    try {
+      const asset = await updateAssetStatus(db, {
+        customerId: assetStatusMatch[1], assetId: assetStatusMatch[2], actorUserId: context.userId, status: body.status
+      });
+      return asset ? response(200, { asset }) : response(404, { error: 'asset_not_found' });
+    } catch (error) {
+      if (error.message === 'Retired asset cannot change status') return response(409, { error: 'asset_retired' });
       throw error;
     }
   }
