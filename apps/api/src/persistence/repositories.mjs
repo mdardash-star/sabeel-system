@@ -182,6 +182,23 @@ export function createRepositories(db) {
         );
         return rows;
       },
+      async listServiceJobs(customerId, { limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT j.id, j.order_id, o.external_order_id, j.technician_id, j.city_id,
+                  l.address_text, j.status, j.scheduled_at, j.completed_at, j.created_at,
+                  r.score AS rating_score, r.comment AS rating_comment,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM service_jobs j
+           JOIN orders o ON o.id = j.order_id
+           LEFT JOIN service_locations l ON l.id = j.service_location_id
+           LEFT JOIN service_ratings r ON r.job_id = j.id
+           WHERE j.customer_id = $1
+           ORDER BY COALESCE(j.completed_at, j.scheduled_at, j.created_at) DESC, j.id DESC
+           LIMIT $2 OFFSET $3`,
+          [customerId, limit, offset]
+        );
+        return rows;
+      },
       async timeline(customerId, { limit = 20, offset = 0 } = {}) {
         const { rows } = await db.query(
           `SELECT events.*, COUNT(*) OVER()::integer AS total_count FROM (
