@@ -57,6 +57,8 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - GET `/assets/:id/history`
 - GET/POST `/maintenance/plans`
 - POST `/maintenance/reminders/run`
+- GET `/maintenance/stats` — active, overdue and upcoming maintenance counters
+- GET `/maintenance/assets?window=overdue|7d|30d|all&q=&limit=20&offset=0` — searchable paginated maintenance worklist
 
 ## Finance
 - GET/POST `/costs`
