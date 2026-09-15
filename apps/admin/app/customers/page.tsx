@@ -17,37 +17,55 @@ const seed: Customer[] = [
 export default function CustomersPage() {
   const [customers,setCustomers] = useState<Customer[]>(apiBase ? [] : seed);
   const [query,setQuery] = useState("");
+  const [search,setSearch] = useState("");
+  const [page,setPage] = useState(0);
+  const [total,setTotal] = useState(seed.length);
+  const [reloadKey,setReloadKey] = useState(0);
   const [open,setOpen] = useState(false);
   const [error,setError] = useState("");
   const [pageError,setPageError] = useState("");
   const [loading,setLoading] = useState(Boolean(apiBase));
   const shown = useMemo(() => {
     const q=query.trim().toLowerCase();
+    if(apiBase)return customers;
     return q ? customers.filter(c => [c.id,c.name,c.phone,c.area].some(v => v.toLowerCase().includes(q))) : customers;
   },[customers,query]);
+
+  useEffect(() => {
+    if(!apiBase)return;
+    const timer=window.setTimeout(()=>{setPage(0);setSearch(query.trim());},300);
+    return()=>window.clearTimeout(timer);
+  },[query]);
 
   useEffect(() => {
     if (!apiBase) return;
     const token=sessionStorage.getItem("subil_session");
     const controller=new AbortController();
-    fetch(`${apiBase}/api/v1/customers?limit=100`,{headers:{Authorization:`Bearer ${token}`},signal:controller.signal})
+    const params=new URLSearchParams({limit:"20",offset:String(page*20)});
+    if(search)params.set("q",search);
+    setLoading(true);
+    fetch(`${apiBase}/api/v1/customers?${params}`,{headers:{Authorization:`Bearer ${token}`},signal:controller.signal})
       .then(async response => {
         if(!response.ok) throw new Error(response.status===401?"انتهت جلسة الدخول. سجل الدخول مجددًا.":"تعذر تحميل العملاء.");
         return response.json();
       })
-      .then(payload => setCustomers((payload.customers||[]).map((customer:Record<string,unknown>) => ({
-        id:String(customer.id), name:String(customer.name||"بدون اسم"), phone:String(customer.mobile||"—"),
-        area:String(customer.address_text||customer.city_id||"—"), orders:Number(customer.order_count||0),
-        lastOrder:customer.last_order_at?new Intl.DateTimeFormat("ar-SA",{dateStyle:"medium"}).format(new Date(String(customer.last_order_at))):"لا توجد طلبات",
-        status:Number(customer.order_count||0)>0?"نشط":"جديد",
-      }))))
+      .then(payload => {
+        setCustomers((payload.customers||[]).map((customer:Record<string,unknown>) => ({
+          id:String(customer.id), name:String(customer.name||"بدون اسم"), phone:String(customer.mobile||"—"),
+          area:String(customer.address_text||customer.city_id||"—"), orders:Number(customer.order_count||0),
+          lastOrder:customer.last_order_at?new Intl.DateTimeFormat("ar-SA",{dateStyle:"medium"}).format(new Date(String(customer.last_order_at))):"لا توجد طلبات",
+          status:Number(customer.order_count||0)>0?"نشط":"جديد",
+        })));
+        setTotal(Number(payload.pagination?.total||0));
+        setPageError("");
+      })
       .catch((fetchError:unknown) => {
         if(fetchError instanceof DOMException && fetchError.name==="AbortError") return;
         setPageError(fetchError instanceof Error?fetchError.message:"تعذر تحميل العملاء.");
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  },[]);
+  },[page,reloadKey,search]);
 
   function close(){ setError(""); setOpen(false); }
   async function submit(event:FormEvent<HTMLFormElement>){
@@ -66,7 +84,8 @@ export default function CustomersPage() {
         if(!response.ok) throw new Error(payload.error==="mobile_already_exists"?"رقم الجوال مسجل لعميل آخر.":"تعذر حفظ العميل.");
         created={...created,id:String(payload.customer.id),phone:String(payload.customer.mobile||created.phone)};
       }
-      setCustomers(list=>[created,...list]);
+      if(apiBase){setQuery("");setSearch("");setPage(0);setReloadKey(value=>value+1);}
+      else{setCustomers(list=>[created,...list]);setTotal(value=>value+1);}
       setPageError(""); close();
     } catch(saveError) { setError(saveError instanceof Error?saveError.message:"تعذر حفظ العميل."); }
     finally { setLoading(false); }
@@ -77,10 +96,11 @@ export default function CustomersPage() {
     <div className="customers-wrap">
       <div className="demo-notice"><span>نسخة المعاينة</span> بيانات العملاء تجريبية ولا تؤثر على متجر سبيل المباشر.</div>
       <div className="page-head"><div><p>إدارة علاقات العملاء</p><h1>العملاء</h1><span>عرض بيانات العملاء وسجل طلباتهم</span></div><button className="primary-button" onClick={()=>setOpen(true)}><span>+</span> إضافة عميل</button></div>
-      <section className="customer-stats" aria-label="ملخص العملاء"><article><span>إجمالي العملاء</span><strong>{customers.length.toLocaleString("ar-SA")}</strong></article><article><span>عملاء جدد هذا الشهر</span><strong>١٢</strong></article><article><span>لديهم طلب نشط</span><strong>١٨</strong></article></section>
+      <section className="customer-stats" aria-label="ملخص العملاء"><article><span>إجمالي العملاء</span><strong>{total.toLocaleString("ar-SA")}</strong></article><article><span>النتائج المعروضة</span><strong>{shown.length.toLocaleString("ar-SA")}</strong></article><article><span>لديهم طلبات</span><strong>{shown.filter(customer=>customer.orders>0).length.toLocaleString("ar-SA")}</strong></article></section>
       {pageError&&<div className="api-error" role="alert">{pageError}</div>}
-      <article className="panel"><div className="customers-toolbar"><div><h2>قائمة العملاء</h2><p>{loading?"جارٍ التحميل...":`${shown.length.toLocaleString("ar-SA")} نتيجة`}</p></div><input aria-label="بحث العملاء" value={query} onChange={e=>setQuery(e.target.value)} placeholder="ابحث بالاسم، الجوال، المنطقة أو الرقم..." /></div>
+      <article className="panel"><div className="customers-toolbar"><div><h2>قائمة العملاء</h2><p>{loading?"جارٍ التحميل...":`${total.toLocaleString("ar-SA")} نتيجة`}</p></div><input aria-label="بحث العملاء" value={query} onChange={e=>setQuery(e.target.value)} placeholder="ابحث بالاسم، الجوال، المنطقة أو الرقم..." /></div>
         <div className="table-wrap"><table><thead><tr><th>العميل</th><th>الجوال</th><th>المنطقة</th><th>الطلبات</th><th>آخر طلب</th><th>الحالة</th></tr></thead><tbody>{shown.map(c=><tr key={c.id}><td><a className="customer-name-link" href={`/customers/${c.id}`}><strong>{c.name}</strong><small>{c.id}</small></a></td><td dir="ltr">{c.phone}</td><td>{c.area}</td><td>{c.orders.toLocaleString("ar-SA")}</td><td>{c.lastOrder}</td><td><span className={`status ${c.status==="نشط"?"done":"scheduled"}`}>{c.status}</span></td></tr>)}</tbody></table>{!shown.length&&<div className="empty-state">لا توجد نتائج مطابقة للبحث.</div>}</div>
+        {apiBase&&total>20&&<nav className="customers-pagination" aria-label="صفحات العملاء"><button className="secondary-button" disabled={loading||page===0} onClick={()=>setPage(value=>Math.max(0,value-1))}>السابق</button><span>صفحة {(page+1).toLocaleString("ar-SA")} من {Math.ceil(total/20).toLocaleString("ar-SA")}</span><button className="secondary-button" disabled={loading||(page+1)*20>=total} onClick={()=>setPage(value=>value+1)}>التالي</button></nav>}
       </article>
     </div>
     {open&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!loading)close();}}><section className="customer-modal" role="dialog" aria-modal="true" aria-labelledby="add-title"><div className="modal-head"><div><h2 id="add-title">إضافة عميل جديد</h2><p>أدخل البيانات الأساسية للعميل</p></div><button aria-label="إغلاق" disabled={loading} onClick={close}>×</button></div><form onSubmit={submit}><label>اسم العميل<input name="name" autoFocus disabled={loading} placeholder="الاسم الكامل" /></label><label>رقم الجوال<input name="phone" dir="ltr" inputMode="numeric" disabled={loading} placeholder="05XXXXXXXX" /></label><label>المنطقة<input name="area" disabled={loading} placeholder="مثال: الياسمين" /></label>{error&&<p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" className="secondary-button" disabled={loading} onClick={close}>إلغاء</button><button className="primary-button" disabled={loading} type="submit">{loading?"جارٍ الحفظ...":"حفظ العميل"}</button></div></form></section></div>}
