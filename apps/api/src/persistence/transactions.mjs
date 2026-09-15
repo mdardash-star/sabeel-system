@@ -173,6 +173,35 @@ export async function completeAssetMaintenance(db, { customerId, assetId, actorU
   });
 }
 
+export async function updateAssetStatus(db, { customerId, assetId, actorUserId, status }) {
+  return withTransaction(db, async (client) => {
+    const locked = await client.query(
+      `SELECT id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
+              maintenance_interval_months, last_maintenance_at, next_maintenance_at, status
+       FROM installed_assets WHERE id = $1 AND customer_id = $2 FOR UPDATE`,
+      [assetId, customerId]
+    );
+    const current = locked.rows[0];
+    if (!current) return null;
+    if (current.status === 'retired') throw new Error('Retired asset cannot change status');
+    if (current.status === status) return current;
+
+    const updated = await client.query(
+      `UPDATE installed_assets SET status = $3
+       WHERE id = $1 AND customer_id = $2
+       RETURNING id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
+                 maintenance_interval_months, last_maintenance_at, next_maintenance_at, status`,
+      [assetId, customerId, status]
+    );
+    await client.query(
+      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, 'asset.status_changed', 'installed_asset', $2, $3::jsonb)`,
+      [actorUserId, assetId, JSON.stringify({ customerId, from: current.status, to: status })]
+    );
+    return updated.rows[0];
+  });
+}
+
 function addUtcMonths(iso, months) {
   const date = new Date(iso);
   const day = date.getUTCDate();
