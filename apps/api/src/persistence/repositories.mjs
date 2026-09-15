@@ -151,6 +151,27 @@ export function createRepositories(db) {
         );
         return rows;
       },
+      async findAsset(customerId, assetId) {
+        const { rows } = await db.query(
+          `SELECT id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
+                  maintenance_interval_months, last_maintenance_at, next_maintenance_at, status
+           FROM installed_assets WHERE id = $1 AND customer_id = $2 LIMIT 1`,
+          [assetId, customerId]
+        );
+        return rows[0] || null;
+      },
+      async listAssetHistory(customerId, assetId, { limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT e.id, e.asset_id, e.completed_at, e.notes, e.performed_by, e.created_at,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM asset_maintenance_events e
+           JOIN installed_assets a ON a.id = e.asset_id
+           WHERE e.asset_id = $1 AND a.customer_id = $2
+           ORDER BY e.completed_at DESC, e.id DESC LIMIT $3 OFFSET $4`,
+          [assetId, customerId, limit, offset]
+        );
+        return rows;
+      },
       async listOrders(customerId, { limit = 20, offset = 0 } = {}) {
         const { rows } = await db.query(
           `SELECT id, external_source, external_order_id, paid_at, total_ex_vat, created_at,
