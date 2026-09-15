@@ -35,7 +35,7 @@ Base prefix: `/api/v1`
 
 ## Technician
 - GET `/technicians/me/jobs?from=<ISO>&to=<ISO>`
-- GET `/technicians/me/jobs/:id`
+- GET `/technicians/me/jobs/:id` — returns the assigned job only; another technician's job returns `404`
 - GET `/technicians/me/wallet`
 
 The signed-in user is resolved to an active technician profile server-side. Job lists are read from PostgreSQL and expose operational location fields only; customer contact fields are never selected.

@@ -40,3 +40,25 @@ test('live HTTP technician endpoint fails closed without database', async (t) =>
   });
   assert.equal(response.status, 503);
 });
+
+test('live HTTP technician job details route is connected to PostgreSQL', async (t) => {
+  const db = {
+    query: async (sql, params) => {
+      if (/FROM technicians t/.test(sql)) return { rows: [{ id: 'tech-1', user_id: 'user-1' }] };
+      assert.match(sql, /j\.id = \$1 AND j\.technician_id = \$2/);
+      assert.deepEqual(params, ['job-1', 'tech-1']);
+      return { rows: [{ id: 'job-1', technician_id: 'tech-1', address_text: 'Riyadh' }] };
+    }
+  };
+  const server = createApiServer({ db });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/v1/technicians/me/jobs/job-1`, {
+    headers: { 'x-subil-role': 'technician', 'x-subil-user-id': 'user-1' }
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.job.id, 'job-1');
+});

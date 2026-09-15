@@ -37,7 +37,7 @@ export function createApiServer({ db = createDatabase() } = {}) {
 }
 
 function isPersistentRoute(method, pathname) {
-  return method === 'GET' && pathname === '/api/v1/technicians/me/jobs';
+  return method === 'GET' && /^\/api\/v1\/technicians\/me\/jobs(?:\/[^/]+)?$/.test(pathname);
 }
 
 function sendJson(res, status, data) {
