@@ -102,6 +102,15 @@ export function createRepositories(db) {
           throw error;
         } finally { client.release(); }
       },
+      async addAddress(customerId, { cityId, addressText }) {
+        const { rows } = await db.query(
+          `INSERT INTO service_locations (customer_id, city_id, address_text)
+           SELECT id, $2, $3 FROM customers WHERE id = $1
+           RETURNING id, customer_id, city_id, address_text, created_at`,
+          [customerId, cityId, addressText]
+        );
+        return rows[0] || null;
+      },
       async findByIdentity(source, identityKey) {
         const { rows } = await db.query(
           `SELECT c.* FROM customers c
