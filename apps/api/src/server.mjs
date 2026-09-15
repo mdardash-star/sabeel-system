@@ -4,12 +4,27 @@ import { routeRequest } from './http/router.mjs';
 import { routePersistentRequest } from './http/persistent-router.mjs';
 import { createDatabase } from './persistence/database.mjs';
 import { authenticateBearer } from './auth/session-auth.mjs';
+import { routeAuthRequest } from './http/auth-router.mjs';
+import { createOtpSender } from './integrations/otp-sender.mjs';
 
-export function createRequestHandler({ db = null } = {}) {
+export function createRequestHandler({ db = null, auth = {} } = {}) {
   return async function handleRequest(req, res) {
     try {
       const requestUrl = new URL(req.url, 'http://subil.local');
       const body = await readJson(req);
+      const authRoute = isAuthRoute(req.method, requestUrl.pathname);
+      if (authRoute) {
+        const result = await routeAuthRequest({
+          method: req.method,
+          url: requestUrl.pathname,
+          body,
+          authorization: req.headers.authorization,
+          db,
+          auth
+        });
+        return sendJson(res, result.status, result.data);
+      }
+
       const persistent = isPersistentRoute(req.method, requestUrl.pathname);
       let role = req.headers['x-subil-role'] || 'anonymous';
       let userId = req.headers['x-subil-user-id'] || null;
@@ -42,8 +57,22 @@ export function createRequestHandler({ db = null } = {}) {
   };
 }
 
-export function createApiServer({ db = createDatabase() } = {}) {
-  return http.createServer(createRequestHandler({ db }));
+export function createApiServer({ db = createDatabase(), auth = {} } = {}) {
+  const runtimeAuth = {
+    hashSecret: process.env.OTP_HASH_SECRET,
+    sendOtp: createOtpSender(),
+    ...auth
+  };
+  return http.createServer(createRequestHandler({ db, auth: runtimeAuth }));
+}
+
+function isAuthRoute(method, pathname) {
+  if (method === 'GET') return pathname === '/api/v1/me';
+  return method === 'POST' && [
+    '/api/v1/auth/otp/request',
+    '/api/v1/auth/otp/verify',
+    '/api/v1/auth/logout'
+  ].includes(pathname);
 }
 
 function isPersistentRoute(method, pathname) {

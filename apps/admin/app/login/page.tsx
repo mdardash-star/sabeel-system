@@ -1,7 +1,11 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { useState } from "react";
+import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
+
+const apiBase = process.env.NEXT_PUBLIC_SUBIL_API_URL?.replace(/\/$/, "") || "";
+const adminRoles = new Set(["dispatcher", "support", "finance", "branch_manager", "admin", "super_admin"]);
 
 function ShieldIcon() {
   return (
@@ -27,24 +31,69 @@ export default function LoginPage() {
   const [mobile, setMobile] = useState("");
   const [otp, setOtp] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function requestOtp(event: FormEvent<HTMLFormElement>) {
+  async function requestOtp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!/^5\d{8}$/.test(mobile)) {
       setError("أدخل رقم جوال سعودي صحيحًا يبدأ بالرقم 5");
       return;
     }
     setError("");
-    setStep("otp");
+    if (!apiBase) {
+      setStep("otp");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${apiBase}/api/v1/auth/otp/request`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mobile: `+966${mobile}` }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(authErrorMessage(payload.error));
+      setStep("otp");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "تعذر إرسال رمز التحقق");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function verifyOtp(event: FormEvent<HTMLFormElement>) {
+  async function verifyOtp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!/^\d{6}$/.test(otp)) {
       setError("أدخل رمز التحقق المكوّن من 6 أرقام");
       return;
     }
-    router.push("/");
+    setError("");
+    if (!apiBase) {
+      router.push("/");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${apiBase}/api/v1/auth/otp/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mobile: `+966${mobile}`, code: otp }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(authErrorMessage(payload.error));
+      if (!adminRoles.has(payload.user?.role)) {
+        throw new Error("لا توجد صلاحية لهذا الرقم للدخول إلى لوحة الإدارة");
+      }
+      sessionStorage.setItem("subil_session", payload.token);
+      sessionStorage.setItem("subil_role", payload.user.role);
+      router.push("/");
+    } catch (verifyError) {
+      setError(verifyError instanceof Error ? verifyError.message : "تعذر التحقق من الرمز");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -98,7 +147,7 @@ export default function LoginPage() {
                   />
                 </div>
                 {error && <p className="field-error" role="alert">{error}</p>}
-                <button className="login-submit" type="submit">إرسال رمز التحقق</button>
+                <button className="login-submit" type="submit" disabled={loading}>{loading ? "جارٍ الإرسال..." : "إرسال رمز التحقق"}</button>
               </form>
             </>
           ) : (
@@ -125,17 +174,30 @@ export default function LoginPage() {
                   dir="ltr"
                 />
                 {error && <p className="field-error" role="alert">{error}</p>}
-                <button className="login-submit" type="submit">تحقق ودخول</button>
+                <button className="login-submit" type="submit" disabled={loading}>{loading ? "جارٍ التحقق..." : "تحقق ودخول"}</button>
                 <button className="login-back" type="button" onClick={() => { setStep("mobile"); setOtp(""); setError(""); }}>تغيير رقم الجوال</button>
               </form>
             </>
           )}
 
-          <div className="preview-login-note"><span>نسخة معاينة</span> لن تُرسل رسالة فعلية حاليًا؛ أدخل أي رمز من 6 أرقام.</div>
+          {!apiBase && <div className="preview-login-note"><span>نسخة معاينة</span> لن تُرسل رسالة فعلية حاليًا؛ أدخل أي رمز من 6 أرقام.</div>}
           <button className="fallback-login" type="button">الدخول الإداري الاحتياطي</button>
           <p className="login-footer">© 2026 مؤسسة سبيل المتحدة للتجارة</p>
         </div>
       </section>
     </main>
   );
+}
+
+function authErrorMessage(code: string) {
+  const messages: Record<string, string> = {
+    invalid_mobile: "رقم الجوال غير صحيح",
+    otp_resend_cooldown: "انتظر دقيقة قبل طلب رمز جديد",
+    otp_invalid_or_expired: "رمز التحقق غير صحيح أو انتهت صلاحيته",
+    otp_attempts_exceeded: "تجاوزت عدد المحاولات؛ اطلب رمزًا جديدًا",
+    user_inactive: "الحساب موقوف؛ تواصل مع الإدارة",
+    otp_delivery_failed: "تعذر إرسال الرمز حاليًا؛ حاول لاحقًا",
+    otp_sender_unavailable: "خدمة الرسائل غير مهيأة حاليًا",
+  };
+  return messages[code] || "تعذر إكمال تسجيل الدخول؛ حاول لاحقًا";
 }
