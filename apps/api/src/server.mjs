@@ -47,6 +47,7 @@ export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } 
         offset: requestUrl.searchParams.get('offset') || undefined,
         query: requestUrl.searchParams.get('q') || undefined,
         window: requestUrl.searchParams.get('window') || undefined,
+        status: requestUrl.searchParams.get('status') || undefined,
         jobs: []
       };
 
@@ -101,6 +102,7 @@ function isAuthRoute(method, pathname) {
 function isPersistentRoute(method, pathname) {
   if (method === 'GET') {
     return pathname === '/api/v1/maintenance/stats' || pathname === '/api/v1/maintenance/assets' ||
+      pathname === '/api/v1/jobs/stats' || pathname === '/api/v1/jobs' ||
       /^\/api\/v1\/customers(?:\/[^/]+)?(?:\/(?:timeline|addresses|assets|orders|jobs))?$/.test(pathname) ||
       /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+\/history$/.test(pathname) ||
       /^\/api\/v1\/technicians\/me\/jobs(?:\/[^/]+)?$/.test(pathname) ||
