@@ -16,8 +16,7 @@ jobs:
           POSTGRES_USER: subil
           POSTGRES_PASSWORD: test_password
           POSTGRES_DB: subil_test
-        ports:
-          - 5432:5432
+        ports: ["5432:5432"]
     env:
       PGPASSWORD: test_password
     steps:
@@ -29,23 +28,32 @@ jobs:
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/002_webhook_deliveries.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/003_dispatch_capabilities.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/004_technician_location.sql
       - name: Test core schema
         run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/tests/core-schema.sql
-      - name: Verify dispatch capability schema
+      - name: Verify dispatch and location schema
         run: |
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT required_skill_code FROM service_jobs LIMIT 0;"
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, skill_code FROM technician_skills LIMIT 0;"
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, available_from, available_to FROM technician_availability LIMIT 0;"
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, latitude, longitude, accuracy_meters, captured_at FROM technician_locations LIMIT 0;"
+      - name: Verify technician coordinate constraints
+        run: |
+          U=$(psql -h localhost -U subil -d subil_test -tAc "INSERT INTO users(mobile,role) VALUES ('966500000099','technician') RETURNING id;")
+          T=$(psql -h localhost -U subil -d subil_test -tAc "INSERT INTO technicians(user_id,city_id) VALUES ('$U','riyadh') RETURNING id;")
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO technician_locations(technician_id,latitude,longitude,captured_at) VALUES ('$T',24.7136,46.6753,now());"
+          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "UPDATE technician_locations SET latitude=100 WHERE technician_id='$T';"; then exit 1; else exit 0; fi
       - name: Verify webhook replay table
         run: |
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"
           if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"; then exit 1; else exit 0; fi
       - name: Roll back migrations
         run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/004_technician_location.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/003_dispatch_capabilities.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/002_webhook_deliveries.down.sql
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.down.sql
       - name: Verify rollback
         run: |
-          COUNT=$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','customers','service_jobs','technician_settlements','wallet_entries','installed_assets','webhook_deliveries','technician_skills','technician_availability');")
+          COUNT=$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','customers','service_jobs','technician_settlements','wallet_entries','installed_assets','webhook_deliveries','technician_skills','technician_availability','technician_locations');")
           test "$COUNT" = "0"
