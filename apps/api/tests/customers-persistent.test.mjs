@@ -112,3 +112,14 @@ for (const collection of ['addresses','assets','orders']) {
     assert.deepEqual(result.data.pagination,{limit:5,offset:10,total:12});
   });
 }
+
+test('support reads paginated maintenance history for an owned asset',async()=>{
+  const db={query:async(sql,params)=>{
+    if(/FROM installed_assets WHERE id/.test(sql))return{rows:[{id:'asset-1',customer_id:'c1'}]};
+    assert.match(sql,/FROM asset_maintenance_events/);assert.deepEqual(params,['asset-1','c1',10,0]);
+    return{rows:[{id:'maintenance-1',notes:'تغيير فلاتر',total_count:1}]};
+  }};
+  const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/c1/assets/asset-1/history',role:'support',context:{limit:'10'},db});
+  assert.equal(result.status,200);assert.equal(result.data.maintenance[0].id,'maintenance-1');
+  assert.deepEqual(result.data.pagination,{limit:10,offset:0,total:1});
+});
