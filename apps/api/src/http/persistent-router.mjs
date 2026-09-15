@@ -24,7 +24,34 @@ export async function routePersistentRequest({ method, url, role, context = {}, 
     return response(200, { technicianId: identity.technician.id, from, to, jobs });
   }
 
+  if (method === 'GET' && url === '/api/v1/technicians/me/wallet') {
+    const identity = await resolveTechnician({ role, context, db });
+    if (identity.error) return identity.error;
+
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const [balance, entries] = await Promise.all([
+      identity.repos.wallet.balance(identity.technician.id),
+      identity.repos.wallet.listForTechnician(identity.technician.id, pagination)
+    ]);
+    return response(200, {
+      technicianId: identity.technician.id,
+      balance,
+      currency: entries[0]?.currency || 'SAR',
+      entries: entries.map(({ total_count, ...entry }) => entry),
+      pagination: { ...pagination, total: entries[0]?.total_count || 0 }
+    });
+  }
+
   return response(404, { error: 'not_found' });
+}
+
+function parsePagination(context) {
+  const limit = context.limit === undefined ? 20 : Number(context.limit);
+  const offset = context.offset === undefined ? 0 : Number(context.offset);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) return null;
+  if (!Number.isInteger(offset) || offset < 0) return null;
+  return { limit, offset };
 }
 
 async function resolveTechnician({ role, context, db }) {

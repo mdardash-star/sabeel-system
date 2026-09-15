@@ -79,3 +79,38 @@ test('another technicians job is indistinguishable from a missing job', async ()
   assert.equal(result.status, 404);
   assert.equal(result.data.error, 'job_not_found');
 });
+
+test('technician wallet returns PostgreSQL balance and paginated entries', async () => {
+  const db = {
+    query: async (sql, params) => {
+      if (/FROM technicians t/.test(sql)) return { rows: [{ id: 'tech-1', user_id: 'user-1' }] };
+      if (/COALESCE\(SUM/.test(sql)) return { rows: [{ balance: '125.50' }] };
+      assert.deepEqual(params, ['tech-1', 10, 20]);
+      return { rows: [{ id: 'w1', amount: '125.50', currency: 'SAR', total_count: 21 }] };
+    }
+  };
+  const result = await routePersistentRequest({
+    method: 'GET',
+    url: '/api/v1/technicians/me/wallet',
+    role: 'technician',
+    context: { userId: 'user-1', limit: '10', offset: '20' },
+    db
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.balance, 125.5);
+  assert.equal(result.data.entries[0].id, 'w1');
+  assert.equal('total_count' in result.data.entries[0], false);
+  assert.deepEqual(result.data.pagination, { limit: 10, offset: 20, total: 21 });
+});
+
+test('technician wallet rejects invalid pagination', async () => {
+  const result = await routePersistentRequest({
+    method: 'GET',
+    url: '/api/v1/technicians/me/wallet',
+    role: 'technician',
+    context: { userId: 'user-1', limit: '101' },
+    db: technicianDb([])
+  });
+  assert.equal(result.status, 400);
+  assert.equal(result.data.error, 'invalid_pagination');
+});

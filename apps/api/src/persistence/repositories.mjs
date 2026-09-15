@@ -111,6 +111,18 @@ export function createRepositories(db) {
           [technicianId]
         );
         return Number(rows[0].balance);
+      },
+      async listForTechnician(technicianId, { limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT id, settlement_id, entry_type, amount, currency, status, created_at,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM wallet_entries
+           WHERE technician_id = $1
+           ORDER BY created_at DESC, id DESC
+           LIMIT $2 OFFSET $3`,
+          [technicianId, limit, offset]
+        );
+        return rows;
       }
     },
 

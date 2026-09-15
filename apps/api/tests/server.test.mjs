@@ -62,3 +62,26 @@ test('live HTTP technician job details route is connected to PostgreSQL', async 
   assert.equal(response.status, 200);
   assert.equal(payload.job.id, 'job-1');
 });
+
+test('live HTTP technician wallet route uses pagination query parameters', async (t) => {
+  const db = {
+    query: async (sql, params) => {
+      if (/FROM technicians t/.test(sql)) return { rows: [{ id: 'tech-1', user_id: 'user-1' }] };
+      if (/COALESCE\(SUM/.test(sql)) return { rows: [{ balance: '80.00' }] };
+      assert.deepEqual(params, ['tech-1', 5, 10]);
+      return { rows: [{ id: 'w1', amount: '80.00', currency: 'SAR', total_count: 11 }] };
+    }
+  };
+  const server = createApiServer({ db });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/v1/technicians/me/wallet?limit=5&offset=10`, {
+    headers: { 'x-subil-role': 'technician', 'x-subil-user-id': 'user-1' }
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.balance, 80);
+  assert.deepEqual(payload.pagination, { limit: 5, offset: 10, total: 11 });
+});
