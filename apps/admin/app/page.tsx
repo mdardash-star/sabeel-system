@@ -1,3 +1,5 @@
+import PreviewAuthGuard from "./preview-auth-guard";
+
 type IconName =
   | "grid"
   | "orders"
@@ -71,6 +73,7 @@ const technicians = [
 
 export default function Dashboard() {
   return (
+    <PreviewAuthGuard>
     <main className="shell">
       <aside className="sidebar">
         <div className="brand">
@@ -162,5 +165,6 @@ export default function Dashboard() {
         </div>
       </section>
     </main>
+    </PreviewAuthGuard>
   );
 }

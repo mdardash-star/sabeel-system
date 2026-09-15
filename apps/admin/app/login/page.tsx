@@ -33,6 +33,12 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  function completePreviewLogin() {
+    sessionStorage.setItem("subil_session", "preview-admin-session");
+    sessionStorage.setItem("subil_role", "super_admin");
+    router.replace("/");
+  }
+
   async function requestOtp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!/^5\d{8}$/.test(mobile)) {
@@ -70,7 +76,7 @@ export default function LoginPage() {
     }
     setError("");
     if (!apiBase) {
-      router.push("/");
+      completePreviewLogin();
       return;
     }
 
@@ -88,7 +94,7 @@ export default function LoginPage() {
       }
       sessionStorage.setItem("subil_session", payload.token);
       sessionStorage.setItem("subil_role", payload.user.role);
-      router.push("/");
+      router.replace("/");
     } catch (verifyError) {
       setError(verifyError instanceof Error ? verifyError.message : "تعذر التحقق من الرمز");
     } finally {
@@ -181,7 +187,7 @@ export default function LoginPage() {
           )}
 
           {!apiBase && <div className="preview-login-note"><span>نسخة معاينة</span> لن تُرسل رسالة فعلية حاليًا؛ أدخل أي رمز من 6 أرقام.</div>}
-          <button className="fallback-login" type="button">الدخول الإداري الاحتياطي</button>
+          {!apiBase && <button className="fallback-login" type="button" onClick={completePreviewLogin}>الدخول الإداري الاحتياطي</button>}
           <p className="login-footer">© 2026 مؤسسة سبيل المتحدة للتجارة</p>
         </div>
       </section>
