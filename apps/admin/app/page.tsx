@@ -83,7 +83,7 @@ export default function Dashboard() {
         <nav className="nav" aria-label="التنقل الرئيسي">
           <p className="nav-label">القائمة الرئيسية</p>
           {navItems.map((item) => (
-            <a className={`nav-item${item.active ? " active" : ""}`} href="#" key={item.label}>
+            <a className={`nav-item${item.active ? " active" : ""}`} href={item.icon === "customers" ? "/customers" : "#"} key={item.label}>
               <Icon name={item.icon} /><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}
             </a>
           ))}
@@ -156,7 +156,7 @@ export default function Dashboard() {
               <div className="panel-head"><div><h2>إجراءات سريعة</h2><p>الوصول المباشر للمهام المتكررة</p></div></div>
               <div className="quick-grid">
                 <button><span className="blue"><Icon name="calendar"/></span><strong>جدولة مهمة</strong><small>إضافة موعد جديد</small></button>
-                <button><span className="green"><Icon name="customers"/></span><strong>إضافة عميل</strong><small>تسجيل عميل جديد</small></button>
+                <a className="quick-action-link" href="/customers"><span className="green"><Icon name="customers"/></span><strong>إضافة عميل</strong><small>تسجيل عميل جديد</small></a>
                 <button><span className="amber"><Icon name="wallet"/></span><strong>اعتماد مستحقات</strong><small>٤ بانتظار الاعتماد</small></button>
                 <button><span className="violet"><Icon name="reports"/></span><strong>تقرير الأداء</strong><small>عرض التقرير الأسبوعي</small></button>
               </div>
