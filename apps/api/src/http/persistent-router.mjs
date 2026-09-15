@@ -1,6 +1,6 @@
 import { can } from '../auth/rbac.mjs';
 import { createRepositories } from '../persistence/repositories.mjs';
-import { approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, transitionTechnicianJob, updateAssetStatus } from '../persistence/transactions.mjs';
+import { approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, setTechnicianActive, transitionTechnicianJob, updateAssetStatus } from '../persistence/transactions.mjs';
 import { assignPersistentJob, listDispatchCandidates, reassignPersistentJob } from '../dispatch/persistent-dispatch.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
@@ -84,6 +84,57 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       pagination: { ...pagination, total: rows[0]?.total_count || 0 },
       status
     });
+  }
+
+  if (method === 'GET' && url === '/api/v1/technicians/stats') {
+    if (!can(role, 'technicians:read')) return response(403, { error: 'forbidden' });
+    const stats = await createRepositories(db).technicians.operationsStats();
+    return response(200, { stats });
+  }
+
+  if (method === 'GET' && url === '/api/v1/technicians') {
+    if (!can(role, 'technicians:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const status = context.status || 'all';
+    if (!['all', 'active', 'inactive'].includes(status)) return response(400, { error: 'invalid_technician_status_filter' });
+    const rows = await createRepositories(db).technicians.listForOperations({
+      ...pagination, status, query: context.query || ''
+    });
+    return response(200, {
+      technicians: rows.map(({ total_count, ...technician }) => technician),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 }, status
+    });
+  }
+
+  const technicianPerformanceMatch = url.match(/^\/api\/v1\/technicians\/([^/]+)\/performance$/);
+  if (method === 'GET' && technicianPerformanceMatch) {
+    if (!can(role, 'technicians:read')) return response(403, { error: 'forbidden' });
+    const range = parseDateRange(context.from, context.to);
+    if (!range) return response(400, { error: 'invalid_date_range' });
+    const repos = createRepositories(db);
+    const technician = await repos.technicians.performance(technicianPerformanceMatch[1], range.from, range.to);
+    if (!technician) return response(404, { error: 'technician_not_found' });
+    const recentJobs = await repos.technicians.recentJobs(technicianPerformanceMatch[1], range.from, range.to, 10);
+    return response(200, { technician, recentJobs, range });
+  }
+
+  const technicianStatusMatch = url.match(/^\/api\/v1\/technicians\/([^/]+)\/status$/);
+  if (method === 'PATCH' && technicianStatusMatch) {
+    if (!can(role, 'technicians:update')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    if (typeof body.isActive !== 'boolean') return response(400, { error: 'invalid_technician_status' });
+    const reason = cleanOptional(body.reason);
+    if (!body.isActive && reason.length < 3) return response(400, { error: 'deactivation_reason_required' });
+    try {
+      const technician = await setTechnicianActive(db, {
+        technicianId: technicianStatusMatch[1], isActive: body.isActive, reason, actorUserId: context.userId
+      });
+      return technician ? response(200, { technician }) : response(404, { error: 'technician_not_found' });
+    } catch (error) {
+      if (error.message === 'Technician status is unchanged') return response(409, { error: 'technician_status_unchanged' });
+      throw error;
+    }
   }
 
   const candidatesMatch = url.match(/^\/api\/v1\/jobs\/([^/]+)\/candidates$/);
@@ -408,6 +459,15 @@ function parseDate(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function parseDateRange(fromValue, toValue) {
+  const to = toValue ? parseDate(toValue) : new Date().toISOString();
+  const from = fromValue ? parseDate(fromValue) : new Date(Date.now() - 30 * 86400000).toISOString();
+  if (!from || !to || from >= to) return null;
+  const maximumRange = 366 * 86400000;
+  if (new Date(to).getTime() - new Date(from).getTime() > maximumRange) return null;
+  return { from, to };
 }
 
 function addUtcMonths(iso, months) {
