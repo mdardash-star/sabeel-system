@@ -172,6 +172,17 @@ test('live HTTP maintenance completion updates an owned asset atomically',async(
   assert.equal(payload.asset.next_maintenance_at,'2027-03-30T00:00:00.000Z');
 });
 
+test('live HTTP asset status update is scoped and audited',async(t)=>{
+  const client={query:async(sql)=>{if(sql==='BEGIN'||sql==='COMMIT')return{rows:[]};if(/FROM installed_assets/.test(sql))return{rows:[{id:'asset-1',customer_id:'customer-1',status:'active'}]};if(/UPDATE installed_assets/.test(sql))return{rows:[{id:'asset-1',customer_id:'customer-1',status:'inactive'}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error('Unexpected query');},release(){}};
+  const db={query:async()=>({rows:[]}),connect:async()=>client};
+  const server=createApiServer({db:withSession(db,{role:'branch_manager',userId:'manager-1'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();
+  const response=await fetch(`http://127.0.0.1:${port}/api/v1/customers/customer-1/assets/asset-1`,{method:'PATCH',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({status:'inactive'})});
+  assert.equal(response.status,200);assert.equal((await response.json()).asset.status,'inactive');
+});
+
 test('live HTTP technician job details route is connected to PostgreSQL', async (t) => {
   const db = {
     query: async (sql, params) => {
