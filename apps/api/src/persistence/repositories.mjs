@@ -182,9 +182,9 @@ export function createRepositories(db) {
         );
         return rows;
       },
-      async timeline(customerId, limit = 50) {
+      async timeline(customerId, { limit = 20, offset = 0 } = {}) {
         const { rows } = await db.query(
-          `SELECT * FROM (
+          `SELECT events.*, COUNT(*) OVER()::integer AS total_count FROM (
              SELECT 'order' AS type, o.id::text, o.external_order_id AS reference,
                     CASE WHEN o.paid_at IS NULL THEN 'created' ELSE 'paid' END AS status, o.created_at AS occurred_at
              FROM orders o WHERE o.customer_id = $1
@@ -194,8 +194,13 @@ export function createRepositories(db) {
              UNION ALL
              SELECT 'notification', n.id::text, n.event_type, n.status, n.created_at
              FROM notification_events n WHERE n.customer_id = $1
-           ) events ORDER BY occurred_at DESC LIMIT $2`,
-          [customerId, limit]
+             UNION ALL
+             SELECT 'maintenance', e.id::text, a.product_id, 'completed', e.completed_at
+             FROM asset_maintenance_events e
+             JOIN installed_assets a ON a.id = e.asset_id
+             WHERE a.customer_id = $1
+           ) events ORDER BY occurred_at DESC, id DESC LIMIT $2 OFFSET $3`,
+          [customerId, limit, offset]
         );
         return rows;
       },
