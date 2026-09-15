@@ -21,9 +21,16 @@ export function createRepositories(db) {
       },
       async listForTechnician(technicianId, from, to) {
         const { rows } = await db.query(
-          `SELECT * FROM service_jobs
-           WHERE technician_id = $1 AND scheduled_at >= $2 AND scheduled_at < $3
-           ORDER BY scheduled_at ASC`,
+          `SELECT j.id, j.order_id, j.service_location_id, j.city_id, j.technician_id,
+                  j.status, j.scheduled_at, j.service_duration_minutes, j.required_skill_code,
+                  j.completed_at, j.created_at, j.updated_at,
+                  o.external_source, o.external_order_id,
+                  l.address_text, l.latitude, l.longitude
+           FROM service_jobs j
+           JOIN orders o ON o.id = j.order_id
+           LEFT JOIN service_locations l ON l.id = j.service_location_id
+           WHERE j.technician_id = $1 AND j.scheduled_at >= $2 AND j.scheduled_at < $3
+           ORDER BY j.scheduled_at ASC`,
           [technicianId, from, to]
         );
         return rows;
