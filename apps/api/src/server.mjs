@@ -40,6 +40,7 @@ export function createRequestHandler({ db = null, auth = {} } = {}) {
         to: requestUrl.searchParams.get('to') || undefined,
         limit: requestUrl.searchParams.get('limit') || undefined,
         offset: requestUrl.searchParams.get('offset') || undefined,
+        query: requestUrl.searchParams.get('q') || undefined,
         jobs: []
       };
 
@@ -77,11 +78,13 @@ function isAuthRoute(method, pathname) {
 
 function isPersistentRoute(method, pathname) {
   if (method === 'GET') {
-    return /^\/api\/v1\/technicians\/me\/jobs(?:\/[^/]+)?$/.test(pathname) ||
+    return /^\/api\/v1\/customers(?:\/[^/]+)?$/.test(pathname) ||
+      /^\/api\/v1\/technicians\/me\/jobs(?:\/[^/]+)?$/.test(pathname) ||
       pathname === '/api/v1/technicians/me/wallet';
   }
   if (method === 'POST') {
-    return /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
+    return pathname === '/api/v1/customers' ||
+      /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
       /^\/api\/v1\/settlements\/[^/]+\/approve$/.test(pathname);
   }
   return method === 'PATCH' && /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname);
