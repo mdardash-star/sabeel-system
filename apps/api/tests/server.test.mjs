@@ -131,6 +131,22 @@ test('live HTTP maintenance worklist forwards filters and pagination',async(t)=>
   const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.assets[0].days_until_due,12);assert.deepEqual(payload.pagination,{limit:5,offset:10,total:11});
 });
 
+test('live HTTP operations job stats are authenticated',async(t)=>{
+  const db={query:async(sql)=>{assert.match(sql,/completed_today/);return{rows:[{open:12,pending_assignment:3,scheduled_today:4,in_progress:2,overdue:1,completed_today:8}]};}};
+  const server=createApiServer({db:withSession(db,{role:'dispatcher'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/jobs/stats`,{headers:authHeaders});
+  assert.equal(response.status,200);assert.equal((await response.json()).stats.pending_assignment,3);
+});
+
+test('live HTTP operations jobs forward search status and pagination',async(t)=>{
+  const db={query:async(sql,params)=>{assert.match(sql,/sla_state/);assert.deepEqual(params,['نورة','active',5,10]);return{rows:[{id:'job-1',customer_name:'نورة',status:'in_progress',sla_state:'on_track',total_count:7}]};}};
+  const server=createApiServer({db:withSession(db,{role:'support'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/jobs?status=active&q=${encodeURIComponent('نورة')}&limit=5&offset=10`,{headers:authHeaders});
+  const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.jobs[0].status,'in_progress');assert.deepEqual(payload.pagination,{limit:5,offset:10,total:7});
+});
+
 test('live HTTP customer timeline includes maintenance and pagination',async(t)=>{
   const db={query:async(sql,params)=>{if(/SELECT c\.id, c\.name/.test(sql))return{rows:[{id:'customer-1',name:'عميل'}]};assert.match(sql,/asset_maintenance_events/);assert.deepEqual(params,['customer-1',10,20]);return{rows:[{id:'maintenance-1',type:'maintenance',status:'completed',total_count:24}]};}};
   const server=createApiServer({db:withSession(db,{role:'support'})});
