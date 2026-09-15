@@ -18,15 +18,28 @@ test('customer repository resolves external identity with parameters', async () 
   assert.match(calls[0].sql, /customer_external_identities/);
 });
 
-test('technician jobs are scoped and ordered by schedule', async () => {
+test('technician jobs expose operational location but never query customer contact data', async () => {
   const repos = createRepositories(fakeDb((sql, params) => {
-    assert.match(sql, /technician_id = \$1/);
-    assert.match(sql, /ORDER BY scheduled_at ASC/);
+    assert.match(sql, /j\.technician_id = \$1/);
+    assert.match(sql, /ORDER BY j\.scheduled_at ASC/);
+    assert.match(sql, /l\.address_text/);
+    assert.match(sql, /l\.latitude/);
+    assert.match(sql, /l\.longitude/);
+    assert.match(sql, /o\.external_order_id/);
+    assert.doesNotMatch(sql, /JOIN customers/i);
+    assert.doesNotMatch(sql, /\bmobile\b/i);
+    assert.doesNotMatch(sql, /\bphone\b/i);
+    assert.doesNotMatch(sql, /whatsapp/i);
     assert.equal(params[0], 'tech-1');
-    return { rows: [{ id: 'job-1' }] };
+    return { rows: [{ id: 'job-1', address_text: 'Riyadh', latitude: '24.7', longitude: '46.6' }] };
   }));
   const jobs = await repos.jobs.listForTechnician('tech-1', '2026-09-15', '2026-09-16');
   assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].address_text, 'Riyadh');
+  assert.equal('customer_id' in jobs[0], false);
+  assert.equal('phone' in jobs[0], false);
+  assert.equal('mobile' in jobs[0], false);
+  assert.equal('whatsapp' in jobs[0], false);
 });
 
 test('settlement approval only changes pending settlement', async () => {
