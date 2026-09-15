@@ -83,7 +83,7 @@ export default function Dashboard() {
         <nav className="nav" aria-label="التنقل الرئيسي">
           <p className="nav-label">القائمة الرئيسية</p>
           {navItems.map((item) => (
-            <a className={`nav-item${item.active ? " active" : ""}`} href={item.icon === "customers" ? "/customers" : item.icon === "calendar" ? "/maintenance" : "#"} key={item.label}>
+            <a className={`nav-item${item.active ? " active" : ""}`} href={item.icon === "orders" ? "/jobs" : item.icon === "customers" ? "/customers" : item.icon === "calendar" ? "/maintenance" : "#"} key={item.label}>
               <Icon name={item.icon} /><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}
             </a>
           ))}
@@ -120,7 +120,7 @@ export default function Dashboard() {
 
           <section className="dashboard-grid">
             <article className="panel jobs-panel">
-              <div className="panel-head"><div><h2>مهام اليوم</h2><p>متابعة حالة طلبات التركيب والصيانة</p></div><a href="#">عرض الكل <Icon name="arrow" size={16}/></a></div>
+              <div className="panel-head"><div><h2>مهام اليوم</h2><p>متابعة حالة طلبات التركيب والصيانة</p></div><a href="/jobs">عرض الكل <Icon name="arrow" size={16}/></a></div>
               <div className="table-wrap"><table>
                 <thead><tr><th>رقم الطلب</th><th>العميل والخدمة</th><th>الفني</th><th>الموقع والموعد</th><th>الحالة</th><th></th></tr></thead>
                 <tbody>{jobs.map((job) => <tr key={job.id}>
