@@ -111,6 +111,23 @@ export function createRepositories(db) {
         );
         return rows[0] || null;
       },
+      async timeline(customerId, limit = 50) {
+        const { rows } = await db.query(
+          `SELECT * FROM (
+             SELECT 'order' AS type, o.id::text, o.external_order_id AS reference,
+                    CASE WHEN o.paid_at IS NULL THEN 'created' ELSE 'paid' END AS status, o.created_at AS occurred_at
+             FROM orders o WHERE o.customer_id = $1
+             UNION ALL
+             SELECT 'job', j.id::text, j.id::text, j.status, j.created_at
+             FROM service_jobs j WHERE j.customer_id = $1
+             UNION ALL
+             SELECT 'notification', n.id::text, n.event_type, n.status, n.created_at
+             FROM notification_events n WHERE n.customer_id = $1
+           ) events ORDER BY occurred_at DESC LIMIT $2`,
+          [customerId, limit]
+        );
+        return rows;
+      },
       async findByIdentity(source, identityKey) {
         const { rows } = await db.query(
           `SELECT c.* FROM customers c
