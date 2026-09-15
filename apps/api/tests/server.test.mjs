@@ -147,6 +147,18 @@ test('live HTTP operations jobs forward search status and pagination',async(t)=>
   const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.jobs[0].status,'in_progress');assert.deepEqual(payload.pagination,{limit:5,offset:10,total:7});
 });
 
+test('live HTTP dispatcher candidate route ranks eligible technicians',async(t)=>{
+  const db={query:async(sql)=>{if(/FROM service_jobs j LEFT JOIN service_locations/.test(sql))return{rows:[{id:'job-1',city_id:'riyadh',status:'pending_assignment',scheduled_at:'2026-09-20T09:00:00Z',service_duration_minutes:60}]};if(/FROM technicians t/.test(sql))return{rows:[{technician_id:'tech-1',distance_km:'1.5',jobs_in_window:0,avg_rating:'4.9'}]};throw new Error('unexpected query');}};
+  const server=createApiServer({db:withSession(db,{role:'dispatcher',userId:'dispatcher-1'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/jobs/job-1/candidates`,{headers:authHeaders});const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.candidates[0].technician_id,'tech-1');
+});
+
+test('live HTTP dispatcher assignment route commits an audited schedule',async(t)=>{
+  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/service_jobs WHERE id=\$1 FOR UPDATE/.test(sql))return{rows:[{id:'job-1',city_id:'riyadh',status:'pending_assignment',service_duration_minutes:60}]};if(/FROM technicians WHERE/.test(sql))return{rows:[{id:'tech-1',city_id:'riyadh'}]};if(/FROM technician_availability/.test(sql))return{rows:[{'?column?':1}]};if(/SELECT id FROM service_jobs/.test(sql))return{rows:[]};if(/UPDATE service_jobs/.test(sql))return{rows:[{id:'job-1',technician_id:'tech-1',status:'scheduled',scheduled_at:params[2]}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
+  const db={query:async()=>({rows:[]}),connect:async()=>client};const server=createApiServer({db:withSession(db,{role:'dispatcher',userId:'dispatcher-1'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/jobs/job-1/assign`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({technicianId:'tech-1',scheduledAt:'2026-09-20T10:00:00Z',serviceDurationMinutes:60})});const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.job.status,'scheduled');
+});
+
 test('live HTTP customer timeline includes maintenance and pagination',async(t)=>{
   const db={query:async(sql,params)=>{if(/SELECT c\.id, c\.name/.test(sql))return{rows:[{id:'customer-1',name:'عميل'}]};assert.match(sql,/asset_maintenance_events/);assert.deepEqual(params,['customer-1',10,20]);return{rows:[{id:'maintenance-1',type:'maintenance',status:'completed',total_count:24}]};}};
   const server=createApiServer({db:withSession(db,{role:'support'})});
