@@ -87,7 +87,8 @@ function isPersistentRoute(method, pathname) {
       /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
       /^\/api\/v1\/settlements\/[^/]+\/approve$/.test(pathname);
   }
-  return method === 'PATCH' && /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname);
+  return method === 'PATCH' && (/^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
+    /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname));
 }
 
 function sendJson(res, status, data) {
