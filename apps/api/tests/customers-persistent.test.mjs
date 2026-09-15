@@ -62,3 +62,10 @@ test('customer update validates payload before database access', async () => {
   const result=await routePersistentRequest({method:'PATCH',url:'/api/v1/customers/c1',role:'support',body:{mobile:'123'},db});
   assert.deepEqual(result,{status:400,data:{error:'invalid_customer_update'}});
 });
+
+test('support adds an address only to an existing customer', async () => {
+  const db={query:async(sql,params)=>{assert.match(sql,/INSERT INTO service_locations/);assert.deepEqual(params,['c1','riyadh','حي الياسمين']);return{rows:[{id:'a1',customer_id:'c1',city_id:'riyadh',address_text:'حي الياسمين'}]};}};
+  const result=await routePersistentRequest({method:'POST',url:'/api/v1/customers/c1/addresses',role:'support',body:{cityId:'riyadh',addressText:'حي الياسمين'},db});
+  assert.equal(result.status,201);
+  assert.equal(result.data.address.id,'a1');
+});
