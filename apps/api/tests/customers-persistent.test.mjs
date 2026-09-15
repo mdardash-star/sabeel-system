@@ -96,11 +96,12 @@ test('technician cannot register assets for customers', async () => {
   assert.deepEqual(result,{status:403,data:{error:'forbidden'}});
 });
 
-test('support reads an ordered customer timeline', async () => {
-  const db={query:async(sql,params)=>{if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1'}]};assert.match(sql,/UNION ALL/);assert.match(sql,/ORDER BY occurred_at DESC/);assert.deepEqual(params,['c1',25]);return{rows:[{type:'order',id:'o1',status:'paid'}]};}};
-  const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/c1/timeline',role:'support',context:{limit:'25'},db});
+test('support reads a paginated customer timeline including asset maintenance', async () => {
+  const db={query:async(sql,params)=>{if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1'}]};assert.match(sql,/asset_maintenance_events/);assert.match(sql,/ORDER BY occurred_at DESC/);assert.deepEqual(params,['c1',25,10]);return{rows:[{type:'maintenance',id:'m1',status:'completed',total_count:37}]};}};
+  const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/c1/timeline',role:'support',context:{limit:'25',offset:'10'},db});
   assert.equal(result.status,200);
-  assert.equal(result.data.timeline[0].type,'order');
+  assert.equal(result.data.timeline[0].type,'maintenance');
+  assert.deepEqual(result.data.pagination,{limit:25,offset:10,total:37});
 });
 
 for (const collection of ['addresses','assets','orders']) {
