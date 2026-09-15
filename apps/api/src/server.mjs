@@ -21,7 +21,7 @@ export function createRequestHandler({ db = null } = {}) {
       };
 
       const result = isPersistentRoute(req.method, requestUrl.pathname)
-        ? await routePersistentRequest({ method: req.method, url: requestUrl.pathname, role, context, db })
+        ? await routePersistentRequest({ method: req.method, url: requestUrl.pathname, role, body, context, db })
         : routeRequest({ method: req.method, url: requestUrl.pathname, role, body, context });
 
       sendJson(res, result.status, result.data);
@@ -39,10 +39,11 @@ export function createApiServer({ db = createDatabase() } = {}) {
 }
 
 function isPersistentRoute(method, pathname) {
-  return method === 'GET' && (
-    /^\/api\/v1\/technicians\/me\/jobs(?:\/[^/]+)?$/.test(pathname) ||
-    pathname === '/api/v1/technicians/me/wallet'
-  );
+  if (method === 'GET') {
+    return /^\/api\/v1\/technicians\/me\/jobs(?:\/[^/]+)?$/.test(pathname) ||
+      pathname === '/api/v1/technicians/me/wallet';
+  }
+  return method === 'PATCH' && /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname);
 }
 
 function sendJson(res, status, data) {

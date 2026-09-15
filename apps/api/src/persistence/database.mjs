@@ -15,6 +15,7 @@ export function createDatabase({ connectionString = process.env.DATABASE_URL } =
 
   return {
     query: (text, params) => pool.query(text, params),
+    connect: () => pool.connect(),
     close: () => pool.end()
   };
 }
