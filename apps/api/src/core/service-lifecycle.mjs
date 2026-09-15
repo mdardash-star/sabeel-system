@@ -2,12 +2,13 @@ import { serviceJobFromPaidOrder } from '../integrations/woocommerce-order.mjs';
 import { suggestTechnician, assignJob } from '../dispatch/assignment.mjs';
 import { transitionJob } from '../jobs/state-machine.mjs';
 import { notificationForJobStatus } from '../notifications/events.mjs';
-import { calculateSettlement } from '../finance/settlement.mjs';
+import { completeServiceJob } from '../jobs/completion.mjs';
 import { approveSettlement, walletEntryFromSettlement } from '../finance/wallet.mjs';
 import { registerInstalledAsset } from '../crm/assets.mjs';
 
-export function createScheduledService({ order, technicians, scheduledAt, jobId }) {
-  const draft = serviceJobFromPaidOrder(order);
+export function createScheduledService({ order, customerId, technicians, scheduledAt, jobId }) {
+  if (!customerId) throw new Error('SUBIL customer id is required');
+  const draft = serviceJobFromPaidOrder(order, { customerId });
   if (!draft) return null;
   const job = { ...draft, id: jobId, cityId: draft.serviceLocation.city };
   const technician = suggestTechnician(job, technicians);
@@ -25,34 +26,33 @@ export function progressService(job, to, now = new Date()) {
   return { job: next, notification: notificationForJobStatus(next, to) };
 }
 
-export function closeServiceWithFinance({ job, evidence, settlementInput, settlementId, approverUserId, now = new Date() }) {
-  if (job.status !== 'in_progress') throw new Error('Job must be in progress');
-  if (!Array.isArray(evidence) || !evidence.some(e => ['image', 'video'].includes(e.mediaType))) {
-    throw new Error('Photo or video evidence is required');
-  }
-
-  const completedJob = transitionJob(job, 'completed', now);
-  const calculated = calculateSettlement(settlementInput);
+export function closeService({ job, evidence, settlementInput, settlementId, now = new Date() }) {
+  const result = completeServiceJob({ job, evidence, settlementInput, now });
   const pendingSettlement = {
     id: settlementId,
-    jobId: completedJob.id,
-    technicianId: completedJob.technicianId,
-    ...calculated,
-    status: 'pending_approval'
+    ...result.settlement
   };
-  const approvedSettlement = approveSettlement(pendingSettlement, approverUserId, now);
-  const walletEntry = walletEntryFromSettlement(approvedSettlement, now);
 
   return {
-    job: completedJob,
+    job: result.job,
+    evidence: result.evidence,
+    settlement: pendingSettlement,
+    audit: result.audit,
+    notification: notificationForJobStatus(result.job, 'completed')
+  };
+}
+
+export function approveServiceSettlement({ settlement, approverUserId, now = new Date() }) {
+  const approvedSettlement = approveSettlement(settlement, approverUserId, now);
+  return {
     settlement: approvedSettlement,
-    walletEntry,
-    notification: notificationForJobStatus(completedJob, 'completed')
+    walletEntry: walletEntryFromSettlement(approvedSettlement, now)
   };
 }
 
 export function assetFromCompletedService({ job, productId, serialNumber, installedAt, warrantyEndsAt, maintenanceIntervalMonths = 6, assetId }) {
   if (job.status !== 'completed') throw new Error('Job must be completed');
+  if (!job.customerId) throw new Error('Completed job must be linked to a SUBIL customer');
   return registerInstalledAsset({
     id: assetId,
     customerId: job.customerId,
