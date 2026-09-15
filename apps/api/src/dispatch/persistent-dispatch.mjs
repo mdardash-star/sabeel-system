@@ -1,7 +1,7 @@
 import { withTransaction } from '../persistence/transactions.mjs';
 
 export async function listDispatchCandidates(db, jobId, { windowStart, windowEnd, limit = 10 } = {}) {
-  const jobResult = await db.query(`SELECT id, city_id, scheduled_at, status FROM service_jobs WHERE id=$1 LIMIT 1`, [jobId]);
+  const jobResult = await db.query(`SELECT id, city_id, scheduled_at, status, required_skill_code FROM service_jobs WHERE id=$1 LIMIT 1`, [jobId]);
   const job = jobResult.rows[0];
   if (!job) throw new Error('Service job not found');
   if (job.status !== 'pending_assignment' && job.status !== 'scheduled') throw new Error('Service job is not dispatchable');
@@ -11,16 +11,31 @@ export async function listDispatchCandidates(db, jobId, { windowStart, windowEnd
 
   const { rows } = await db.query(
     `SELECT t.id AS technician_id, t.city_id, t.branch_id,
-            COUNT(j.id)::int AS jobs_in_window
+            COALESCE(r.avg_rating,0)::numeric(3,2) AS avg_rating,
+            COALESCE(w.jobs_in_window,0)::int AS jobs_in_window
      FROM technicians t
-     LEFT JOIN service_jobs j ON j.technician_id=t.id
-       AND j.status NOT IN ('completed','cancelled')
-       AND j.scheduled_at >= $2 AND j.scheduled_at < $3
+     JOIN technician_availability a ON a.technician_id=t.id
+       AND a.available_from <= $2 AND a.available_to >= $3
+     LEFT JOIN technician_skills s ON s.technician_id=t.id AND s.skill_code=$4
+     LEFT JOIN LATERAL (
+       SELECT COUNT(*) AS jobs_in_window FROM service_jobs j
+       WHERE j.technician_id=t.id AND j.status NOT IN ('completed','cancelled')
+         AND j.scheduled_at >= $2 AND j.scheduled_at < $3
+     ) w ON true
+     LEFT JOIN LATERAL (
+       SELECT AVG(sr.score) AS avg_rating FROM service_ratings sr WHERE sr.technician_id=t.id
+     ) r ON true
      WHERE t.is_active=true AND t.city_id=$1
-     GROUP BY t.id, t.city_id, t.branch_id
-     ORDER BY jobs_in_window ASC, t.id ASC
-     LIMIT $4`,
-    [job.city_id, start, end, limit]
+       AND ($4::text IS NULL OR s.skill_code IS NOT NULL)
+       AND NOT EXISTS (
+         SELECT 1 FROM service_jobs conflict
+         WHERE conflict.technician_id=t.id AND conflict.id<>$5
+           AND conflict.status NOT IN ('completed','cancelled')
+           AND conflict.scheduled_at >= $2 AND conflict.scheduled_at < $3
+       )
+     ORDER BY jobs_in_window ASC, avg_rating DESC, t.id ASC
+     LIMIT $6`,
+    [job.city_id, start, end, job.required_skill_code || null, job.id, limit]
   );
   return { job, windowStart: start, windowEnd: end, candidates: rows };
 }
