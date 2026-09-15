@@ -2,31 +2,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { listDispatchCandidates, assignPersistentJob } from '../src/dispatch/persistent-dispatch.mjs';
 
-test('candidate query enforces city availability skill conflicts and rating ranking', async () => {
+test('candidate query ranks eligible technicians by proximity then workload and rating', async () => {
   const calls=[];
   const db={query:async(sql,params)=>{
     calls.push({sql,params});
-    if(/SELECT id, city_id/.test(sql)) return {rows:[{id:'j1',city_id:'riyadh',status:'pending_assignment',scheduled_at:'2026-09-15T09:00:00Z',required_skill_code:'ro-install'}]};
-    if(/FROM technicians t/.test(sql)) return {rows:[{technician_id:'t2',city_id:'riyadh',jobs_in_window:0,avg_rating:'4.90'}]};
-    throw new Error('unexpected query');
+    if(/FROM service_jobs j LEFT JOIN service_locations/.test(sql)) return {rows:[{id:'j1',city_id:'riyadh',status:'pending_assignment',scheduled_at:'2026-09-15T09:00:00Z',required_skill_code:'ro-install',latitude:'24.700000',longitude:'46.680000'}]};
+    if(/FROM technicians t/.test(sql)) return {rows:[{technician_id:'near',distance_km:'1.20',jobs_in_window:0,avg_rating:'4.70'},{technician_id:'far',distance_km:'8.40',jobs_in_window:0,avg_rating:'4.90'}]};
+    throw new Error(`unexpected query: ${sql}`);
   }};
   const result=await listDispatchCandidates(db,'j1',{windowEnd:'2026-09-15T13:00:00Z'});
-  assert.equal(result.candidates[0].technician_id,'t2');
+  assert.equal(result.candidates[0].technician_id,'near');
   const q=calls.find(c=>/FROM technicians t/.test(c.sql));
   assert.equal(q.params[0],'riyadh');
   assert.equal(q.params[3],'ro-install');
-  assert.match(q.sql,/technician_availability/);
-  assert.match(q.sql,/technician_skills/);
-  assert.match(q.sql,/NOT EXISTS/);
-  assert.match(q.sql,/avg_rating DESC/);
+  assert.equal(q.params[6],'24.700000');
+  assert.equal(q.params[7],'46.680000');
+  assert.match(q.sql,/technician_locations/);
+  assert.match(q.sql,/6371/);
+  assert.match(q.sql,/distance_km ASC NULLS LAST, jobs_in_window ASC, avg_rating DESC/);
 });
 
-function assignmentDb({skill=true, available=true, conflict=false}={}) {
+function assignmentDb({skill=true, available=true, conflict=false,status='pending_assignment'}={}) {
   const calls=[];
   const client={async query(sql,params=[]){
     calls.push({sql,params});
     if(['BEGIN','COMMIT','ROLLBACK'].includes(sql)) return {rows:[]};
-    if(/service_jobs WHERE id=\$1 FOR UPDATE/.test(sql)) return {rows:[{id:'j1',city_id:'riyadh',status:'pending_assignment',required_skill_code:'ro-install'}]};
+    if(/service_jobs WHERE id=\$1 FOR UPDATE/.test(sql)) return {rows:[{id:'j1',city_id:'riyadh',status,required_skill_code:'ro-install'}]};
     if(/FROM technicians WHERE/.test(sql)) return {rows:[{id:'t1',city_id:'riyadh',is_active:true}]};
     if(/FROM technician_skills/.test(sql)) return {rows:skill?[{'?column?':1}]:[]};
     if(/FROM technician_availability/.test(sql)) return {rows:available?[{'?column?':1}]:[]};
