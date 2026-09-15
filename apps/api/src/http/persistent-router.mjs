@@ -45,6 +45,24 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const timeline = await repos.customers.timeline(timelineMatch[1], limit);
     return response(200, { customerId: timelineMatch[1], timeline });
   }
+  const collectionMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/(addresses|assets)$/);
+  if (method === 'GET' && collectionMatch) {
+    if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const repos = createRepositories(db);
+    const customer = await repos.customers.findDetails(collectionMatch[1]);
+    if (!customer) return response(404, { error: 'customer_not_found' });
+    const key = collectionMatch[2];
+    const rows = key === 'addresses'
+      ? await repos.customers.listAddresses(collectionMatch[1], pagination)
+      : await repos.customers.listAssets(collectionMatch[1], pagination);
+    return response(200, {
+      customerId: collectionMatch[1],
+      [key]: rows.map(({ total_count, ...item }) => item),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 }
+    });
+  }
   const addressMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/addresses$/);
   if (method === 'POST' && addressMatch) {
     if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
