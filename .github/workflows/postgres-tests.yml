@@ -24,9 +24,21 @@ jobs:
       - uses: actions/checkout@v4
       - name: Wait for PostgreSQL
         run: until pg_isready -h localhost -U subil -d subil_test; do sleep 2; done
-      - name: Apply migration
-        run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.sql
-      - name: Test schema
+      - name: Apply migrations
+        run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/002_webhook_deliveries.sql
+      - name: Test core schema
         run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/tests/core-schema.sql
-      - name: Rollback migration
-        run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.down.sql
+      - name: Verify webhook replay table
+        run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"
+          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"; then exit 1; else exit 0; fi
+      - name: Roll back migrations
+        run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/002_webhook_deliveries.down.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.down.sql
+      - name: Verify rollback
+        run: |
+          COUNT=$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','customers','service_jobs','technician_settlements','wallet_entries','installed_assets','webhook_deliveries');")
+          test "$COUNT" = "0"
