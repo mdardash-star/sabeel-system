@@ -113,11 +113,12 @@ test('live HTTP customer stats returns authorized CRM totals', async (t) => {
   assert.deepEqual((await response.json()).stats,{total:42,new_this_month:7,with_orders:31});
 });
 
-for(const collection of ['addresses','assets']){
+for(const collection of ['addresses','assets','orders']){
   test(`live HTTP customer ${collection} route is authenticated and paginated`,async(t)=>{
     const db={query:async(sql,params)=>{
       if(/SELECT c\.id, c\.name/.test(sql))return{rows:[{id:'customer-1',name:'عميل'}]};
-      assert.match(sql,collection==='addresses'?/FROM service_locations/:/FROM installed_assets/);
+      const matcher={addresses:/FROM service_locations/,assets:/FROM installed_assets/,orders:/FROM orders WHERE/}[collection];
+      assert.match(sql,matcher);
       assert.deepEqual(params,['customer-1',5,0]);
       return{rows:[{id:`${collection}-1`,total_count:1}]};
     }};
