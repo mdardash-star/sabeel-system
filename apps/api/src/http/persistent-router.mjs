@@ -51,7 +51,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const timeline = await repos.customers.timeline(timelineMatch[1], limit);
     return response(200, { customerId: timelineMatch[1], timeline });
   }
-  const collectionMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/(addresses|assets)$/);
+  const collectionMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/(addresses|assets|orders)$/);
   if (method === 'GET' && collectionMatch) {
     if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
     const pagination = parsePagination(context);
@@ -60,9 +60,12 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const customer = await repos.customers.findDetails(collectionMatch[1]);
     if (!customer) return response(404, { error: 'customer_not_found' });
     const key = collectionMatch[2];
-    const rows = key === 'addresses'
-      ? await repos.customers.listAddresses(collectionMatch[1], pagination)
-      : await repos.customers.listAssets(collectionMatch[1], pagination);
+    const loaders = {
+      addresses: repos.customers.listAddresses,
+      assets: repos.customers.listAssets,
+      orders: repos.customers.listOrders
+    };
+    const rows = await loaders[key](collectionMatch[1], pagination);
     return response(200, {
       customerId: collectionMatch[1],
       [key]: rows.map(({ total_count, ...item }) => item),
