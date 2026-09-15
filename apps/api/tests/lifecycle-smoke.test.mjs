@@ -28,17 +28,20 @@ test('paid order stays linked to SUBIL customer through installation and finance
     job: inProgress.job,
     evidence: [{ mediaType: 'image', storageKey: 'jobs/job-9001/after.jpg' }],
     settlementId: 'settlement-9001',
-    settlementInput: { saleExVat: 500, productCost: 250, otherCosts: 50, mode: 'percentage', technicianPercentage: 0.30 },
+    settlementInput: { saleExVat: 500, productCost: 250, otherCosts: 50, mode: 'percentage', commissionRate: 0.30, policyVersion: '2026-09' },
     now: new Date('2026-09-15T10:00:00Z')
   });
   assert.equal(closed.job.status, 'completed');
   assert.equal(closed.job.customerId, 'customer-77');
   assert.equal(closed.settlement.status, 'pending_approval');
+  assert.equal(closed.settlement.margin, 200);
+  assert.equal(closed.settlement.payoutAmount, 60);
   assert.equal(closed.notification.type, 'service.completed');
 
   const finance = approveServiceSettlement({ settlement: closed.settlement, approverUserId: 'finance-1', now: new Date('2026-09-15T10:05:00Z') });
   assert.equal(finance.settlement.status, 'approved');
   assert.equal(finance.walletEntry.technicianId, 'tech-1');
+  assert.equal(finance.walletEntry.amount, 60);
 
   const asset = assetFromCompletedService({
     job: closed.job,
