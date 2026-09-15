@@ -3,6 +3,7 @@ import { calculateSettlement } from '../finance/settlement.mjs';
 
 export function completeServiceJob({ job, evidence, settlementInput, now = new Date() }) {
   if (job.status !== 'in_progress') throw new Error('Job must be in progress');
+  if (!job.technicianId) throw new Error('Job must be assigned to a technician');
   if (!Array.isArray(evidence) || evidence.length === 0) {
     throw new Error('Evidence is required before completion');
   }
@@ -16,7 +17,12 @@ export function completeServiceJob({ job, evidence, settlementInput, now = new D
   return {
     job: completedJob,
     evidence: validEvidence,
-    settlement: { ...settlement, jobId: job.id, status: 'pending_approval' },
+    settlement: {
+      ...settlement,
+      jobId: job.id,
+      technicianId: job.technicianId,
+      status: 'pending_approval'
+    },
     auditEvents: [
       { action: 'job.completed', entityType: 'serviceJob', entityId: job.id },
       { action: 'settlement.created', entityType: 'technicianSettlement', entityId: job.id }
