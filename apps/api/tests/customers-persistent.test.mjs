@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { routePersistentRequest } from '../src/http/persistent-router.mjs';
 
+test('support reads aggregate customer stats', async () => {
+  const db={query:async(sql)=>{assert.match(sql,/new_this_month/);assert.match(sql,/EXISTS/);return{rows:[{total:42,new_this_month:7,with_orders:31}]};}};
+  const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/stats',role:'support',db});
+  assert.deepEqual(result,{status:200,data:{stats:{total:42,new_this_month:7,with_orders:31}}});
+});
+
 test('support lists customers with search and pagination', async () => {
   const db = { query: async (sql, params) => {
     assert.match(sql, /FROM customers c/);
