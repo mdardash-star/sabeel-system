@@ -111,6 +111,27 @@ export function createRepositories(db) {
         );
         return rows[0] || null;
       },
+      async listAddresses(customerId, { limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT id, customer_id, city_id, address_text, latitude, longitude, created_at,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM service_locations WHERE customer_id = $1
+           ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`,
+          [customerId, limit, offset]
+        );
+        return rows;
+      },
+      async listAssets(customerId, { limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
+                  last_maintenance_at, next_maintenance_at, status,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM installed_assets WHERE customer_id = $1
+           ORDER BY installed_at DESC, id DESC LIMIT $2 OFFSET $3`,
+          [customerId, limit, offset]
+        );
+        return rows;
+      },
       async timeline(customerId, limit = 50) {
         const { rows } = await db.query(
           `SELECT * FROM (
