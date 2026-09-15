@@ -2,19 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { listDispatchCandidates, assignPersistentJob } from '../src/dispatch/persistent-dispatch.mjs';
 
-test('candidate query is city scoped and ordered by workload', async () => {
+test('candidate query enforces city availability skill conflicts and rating ranking', async () => {
   const calls=[];
   const db={query:async(sql,params)=>{
     calls.push({sql,params});
-    if(/SELECT id, city_id/.test(sql)) return {rows:[{id:'j1',city_id:'riyadh',status:'pending_assignment',scheduled_at:'2026-09-15T09:00:00Z'}]};
-    if(/FROM technicians t/.test(sql)) return {rows:[{technician_id:'t2',city_id:'riyadh',jobs_in_window:1},{technician_id:'t1',city_id:'riyadh',jobs_in_window:3}]};
+    if(/SELECT id, city_id/.test(sql)) return {rows:[{id:'j1',city_id:'riyadh',status:'pending_assignment',scheduled_at:'2026-09-15T09:00:00Z',required_skill_code:'ro-install'}]};
+    if(/FROM technicians t/.test(sql)) return {rows:[{technician_id:'t2',city_id:'riyadh',jobs_in_window:0,avg_rating:'4.90'},{technician_id:'t1',city_id:'riyadh',jobs_in_window:0,avg_rating:'4.60'}]};
     throw new Error('unexpected query');
   }};
   const result=await listDispatchCandidates(db,'j1',{windowEnd:'2026-09-15T13:00:00Z'});
   assert.equal(result.candidates[0].technician_id,'t2');
   const q=calls.find(c=>/FROM technicians t/.test(c.sql));
   assert.equal(q.params[0],'riyadh');
-  assert.match(q.sql,/ORDER BY jobs_in_window ASC/);
+  assert.equal(q.params[3],'ro-install');
+  assert.match(q.sql,/technician_availability/);
+  assert.match(q.sql,/technician_skills/);
+  assert.match(q.sql,/NOT EXISTS/);
+  assert.match(q.sql,/avg_rating DESC/);
 });
 
 test('assignment requires active technician in same city and commits atomically', async () => {
