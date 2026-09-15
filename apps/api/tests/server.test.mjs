@@ -123,11 +123,11 @@ test('live HTTP customer timeline includes maintenance and pagination',async(t)=
   const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.timeline[0].type,'maintenance');assert.deepEqual(payload.pagination,{limit:10,offset:20,total:24});
 });
 
-for(const collection of ['addresses','assets','orders']){
+for(const collection of ['addresses','assets','orders','jobs']){
   test(`live HTTP customer ${collection} route is authenticated and paginated`,async(t)=>{
     const db={query:async(sql,params)=>{
       if(/SELECT c\.id, c\.name/.test(sql))return{rows:[{id:'customer-1',name:'عميل'}]};
-      const matcher={addresses:/FROM service_locations/,assets:/FROM installed_assets/,orders:/FROM orders WHERE/}[collection];
+      const matcher={addresses:/FROM service_locations/,assets:/FROM installed_assets/,orders:/FROM orders WHERE/,jobs:/FROM service_jobs/}[collection];
       assert.match(sql,matcher);
       assert.deepEqual(params,['customer-1',5,0]);
       return{rows:[{id:`${collection}-1`,total_count:1}]};
