@@ -85,3 +85,33 @@ test('live HTTP technician wallet route uses pagination query parameters', async
   assert.equal(payload.balance, 80);
   assert.deepEqual(payload.pagination, { limit: 5, offset: 10, total: 11 });
 });
+
+test('live HTTP technician status route persists transition and audit', async (t) => {
+  const client = {
+    query: async (sql) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+      if (/FROM service_jobs/.test(sql)) return { rows: [{ id: 'job-1', technician_id: 'tech-1', status: 'scheduled' }] };
+      if (/UPDATE service_jobs/.test(sql)) return { rows: [{ id: 'job-1', technician_id: 'tech-1', status: 'en_route' }] };
+      if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
+      throw new Error('Unexpected query');
+    },
+    release() {}
+  };
+  const db = {
+    query: async () => ({ rows: [{ id: 'tech-1', user_id: 'user-1' }] }),
+    connect: async () => client
+  };
+  const server = createApiServer({ db });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/v1/technicians/me/jobs/job-1/status`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-subil-role': 'technician', 'x-subil-user-id': 'user-1' },
+    body: JSON.stringify({ status: 'en_route' })
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.job.status, 'en_route');
+});

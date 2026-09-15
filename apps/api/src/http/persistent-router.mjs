@@ -1,8 +1,35 @@
 import { can } from '../auth/rbac.mjs';
 import { createRepositories } from '../persistence/repositories.mjs';
+import { transitionTechnicianJob } from '../persistence/transactions.mjs';
 
-export async function routePersistentRequest({ method, url, role, context = {}, db }) {
+export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
+
+  const statusMatch = url.match(/^\/api\/v1\/technicians\/me\/jobs\/([^/]+)\/status$/);
+  if (method === 'PATCH' && statusMatch) {
+    const identity = await resolveTechnician({ role, context, db });
+    if (identity.error) return identity.error;
+    if (typeof body.status !== 'string') return response(400, { error: 'status_required' });
+
+    try {
+      const job = await transitionTechnicianJob(db, {
+        jobId: statusMatch[1],
+        technicianId: identity.technician.id,
+        actorUserId: context.userId,
+        toStatus: body.status
+      });
+      if (!job) return response(404, { error: 'job_not_found' });
+      return response(200, { job });
+    } catch (error) {
+      if (error.message === 'Completion requires evidence endpoint') {
+        return response(409, { error: 'completion_endpoint_required' });
+      }
+      if (error.message.startsWith('Invalid transition:')) {
+        return response(409, { error: 'invalid_transition', message: error.message });
+      }
+      throw error;
+    }
+  }
 
   const jobDetailsMatch = url.match(/^\/api\/v1\/technicians\/me\/jobs\/([^/]+)$/);
   if (method === 'GET' && jobDetailsMatch) {

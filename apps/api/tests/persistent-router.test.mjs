@@ -114,3 +114,43 @@ test('technician wallet rejects invalid pagination', async () => {
   assert.equal(result.status, 400);
   assert.equal(result.data.error, 'invalid_pagination');
 });
+
+test('technician status update persists an owned workflow transition', async () => {
+  const client = {
+    query: async (sql) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+      if (/FROM service_jobs/.test(sql)) return { rows: [{ id: 'job-1', technician_id: 'tech-1', status: 'scheduled' }] };
+      if (/UPDATE service_jobs/.test(sql)) return { rows: [{ id: 'job-1', technician_id: 'tech-1', status: 'en_route' }] };
+      if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
+      throw new Error('Unexpected query');
+    },
+    release() {}
+  };
+  const db = {
+    query: async () => ({ rows: [{ id: 'tech-1', user_id: 'user-1' }] }),
+    connect: async () => client
+  };
+  const result = await routePersistentRequest({
+    method: 'PATCH',
+    url: '/api/v1/technicians/me/jobs/job-1/status',
+    role: 'technician',
+    body: { status: 'en_route' },
+    context: { userId: 'user-1' },
+    db
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.job.status, 'en_route');
+});
+
+test('technician completion must use evidence endpoint', async () => {
+  const result = await routePersistentRequest({
+    method: 'PATCH',
+    url: '/api/v1/technicians/me/jobs/job-1/status',
+    role: 'technician',
+    body: { status: 'completed' },
+    context: { userId: 'user-1' },
+    db: { query: async () => ({ rows: [{ id: 'tech-1', user_id: 'user-1' }] }), connect: async () => { throw new Error('must not connect'); } }
+  });
+  assert.equal(result.status, 409);
+  assert.equal(result.data.error, 'completion_endpoint_required');
+});
