@@ -1,9 +1,27 @@
 import { can } from '../auth/rbac.mjs';
 import { createRepositories } from '../persistence/repositories.mjs';
-import { completeTechnicianJob, transitionTechnicianJob } from '../persistence/transactions.mjs';
+import { approveSettlementAndCreditWallet, completeTechnicianJob, transitionTechnicianJob } from '../persistence/transactions.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
+
+  const approveMatch = url.match(/^\/api\/v1\/settlements\/([^/]+)\/approve$/);
+  if (method === 'POST' && approveMatch) {
+    if (!can(role, 'settlements:approve')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+
+    try {
+      const result = await approveSettlementAndCreditWallet(db, {
+        settlementId: approveMatch[1],
+        approverUserId: context.userId
+      });
+      return response(200, result);
+    } catch (error) {
+      if (error.message === 'Settlement not found') return response(404, { error: 'settlement_not_found' });
+      if (error.message === 'Settlement is not approvable') return response(409, { error: 'settlement_not_approvable' });
+      throw error;
+    }
+  }
 
   const completeMatch = url.match(/^\/api\/v1\/technicians\/me\/jobs\/([^/]+)\/complete$/);
   if (method === 'POST' && completeMatch) {

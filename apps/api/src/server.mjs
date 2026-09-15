@@ -44,7 +44,8 @@ function isPersistentRoute(method, pathname) {
       pathname === '/api/v1/technicians/me/wallet';
   }
   if (method === 'POST') {
-    return /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname);
+    return /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
+      /^\/api\/v1\/settlements\/[^/]+\/approve$/.test(pathname);
   }
   return method === 'PATCH' && /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname);
 }

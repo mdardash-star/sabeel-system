@@ -195,3 +195,32 @@ test('technician completion rejects missing evidence before database transaction
   assert.equal(result.status, 422);
   assert.equal(result.data.error, 'evidence_required');
 });
+
+test('finance user approves settlement and credits wallet through PostgreSQL', async () => {
+  const client = {
+    query: async (sql) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+      if (/FOR UPDATE/.test(sql)) return { rows: [{ id: 's1', technician_id: 'tech-1', payout_amount: '90.00', status: 'pending_approval' }] };
+      if (/UPDATE technician_settlements/.test(sql)) return { rows: [{ id: 's1', technician_id: 'tech-1', payout_amount: '90.00', status: 'approved' }] };
+      if (/INSERT INTO wallet_entries/.test(sql)) return { rows: [{ id: 'w1', technician_id: 'tech-1', amount: '90.00' }] };
+      if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
+      throw new Error('Unexpected query');
+    },
+    release() {}
+  };
+  const result = await routePersistentRequest({
+    method: 'POST', url: '/api/v1/settlements/s1/approve', role: 'finance',
+    context: { userId: 'finance-1' }, db: { query: async () => ({ rows: [] }), connect: async () => client }
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.settlement.status, 'approved');
+  assert.equal(result.data.walletEntry.amount, '90.00');
+});
+
+test('technician cannot approve a settlement', async () => {
+  const result = await routePersistentRequest({
+    method: 'POST', url: '/api/v1/settlements/s1/approve', role: 'technician',
+    context: { userId: 'user-1' }, db: { query: async () => ({ rows: [] }), connect: async () => { throw new Error('must not connect'); } }
+  });
+  assert.equal(result.status, 403);
+});

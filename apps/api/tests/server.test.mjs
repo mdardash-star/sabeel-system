@@ -148,3 +148,30 @@ test('live HTTP technician completion route persists evidence and settlement', a
   assert.equal(payload.job.status, 'completed');
   assert.equal(payload.settlement.status, 'pending_approval');
 });
+
+test('live HTTP finance approval route credits technician wallet', async (t) => {
+  const client = {
+    query: async (sql) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+      if (/FOR UPDATE/.test(sql)) return { rows: [{ id: 's1', technician_id: 'tech-1', payout_amount: '90.00', status: 'pending_approval' }] };
+      if (/UPDATE technician_settlements/.test(sql)) return { rows: [{ id: 's1', technician_id: 'tech-1', payout_amount: '90.00', status: 'approved' }] };
+      if (/INSERT INTO wallet_entries/.test(sql)) return { rows: [{ id: 'w1', technician_id: 'tech-1', amount: '90.00' }] };
+      if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
+      throw new Error('Unexpected query');
+    },
+    release() {}
+  };
+  const server = createApiServer({ db: { query: async () => ({ rows: [] }), connect: async () => client } });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/v1/settlements/s1/approve`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-subil-role': 'finance', 'x-subil-user-id': 'finance-1' }
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.settlement.status, 'approved');
+  assert.equal(payload.walletEntry.amount, '90.00');
+});
