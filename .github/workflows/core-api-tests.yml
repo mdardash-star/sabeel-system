@@ -2,7 +2,7 @@ name: Core API Tests
 
 on:
   push:
-    branches: [develop, core-mvp-api]
+    branches: [develop, core-mvp-api, persistence-postgres]
   pull_request:
     branches: [develop]
 
