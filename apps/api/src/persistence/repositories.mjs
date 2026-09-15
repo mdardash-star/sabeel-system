@@ -49,9 +49,8 @@ export function createRepositories(db) {
       async findDetails(id) {
         const { rows } = await db.query(
           `SELECT c.id, c.name, c.created_at, u.mobile,
-                  COALESCE((SELECT json_agg(l ORDER BY l.created_at DESC) FROM service_locations l WHERE l.customer_id = c.id), '[]') AS addresses,
-                  COALESCE((SELECT json_agg(a ORDER BY a.created_at DESC) FROM installed_assets a WHERE a.customer_id = c.id), '[]') AS assets,
-                  COALESCE((SELECT json_agg(o ORDER BY o.created_at DESC) FROM orders o WHERE o.customer_id = c.id), '[]') AS orders
+                  (SELECT COUNT(*)::integer FROM orders o WHERE o.customer_id = c.id) AS order_count,
+                  (SELECT COALESCE(SUM(o.total_ex_vat), 0)::numeric FROM orders o WHERE o.customer_id = c.id) AS order_total_ex_vat
            FROM customers c LEFT JOIN users u ON u.id = c.user_id WHERE c.id = $1 LIMIT 1`,
           [id]
         );
@@ -137,6 +136,16 @@ export function createRepositories(db) {
                   COUNT(*) OVER()::integer AS total_count
            FROM installed_assets WHERE customer_id = $1
            ORDER BY installed_at DESC, id DESC LIMIT $2 OFFSET $3`,
+          [customerId, limit, offset]
+        );
+        return rows;
+      },
+      async listOrders(customerId, { limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT id, external_source, external_order_id, paid_at, total_ex_vat, created_at,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM orders WHERE customer_id = $1
+           ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`,
           [customerId, limit, offset]
         );
         return rows;
