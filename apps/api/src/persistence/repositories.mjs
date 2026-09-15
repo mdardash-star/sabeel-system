@@ -17,6 +17,65 @@ export function createRepositories(db) {
     },
 
     customers: {
+      async list({ query = '', limit = 20, offset = 0 } = {}) {
+        const search = query.trim();
+        const { rows } = await db.query(
+          `SELECT c.id, c.name, u.mobile, location.city_id, location.address_text,
+                  COUNT(DISTINCT o.id)::integer AS order_count, MAX(o.created_at) AS last_order_at,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM customers c
+           LEFT JOIN users u ON u.id = c.user_id
+           LEFT JOIN LATERAL (
+             SELECT city_id, address_text FROM service_locations
+             WHERE customer_id = c.id ORDER BY created_at DESC LIMIT 1
+           ) location ON true
+           LEFT JOIN orders o ON o.customer_id = c.id
+           WHERE ($1 = '' OR c.name ILIKE '%' || $1 || '%' OR u.mobile LIKE '%' || $1 || '%')
+           GROUP BY c.id, u.mobile, location.city_id, location.address_text
+           ORDER BY c.created_at DESC, c.id DESC LIMIT $2 OFFSET $3`,
+          [search, limit, offset]
+        );
+        return rows;
+      },
+      async findDetails(id) {
+        const { rows } = await db.query(
+          `SELECT c.id, c.name, c.created_at, u.mobile,
+                  COALESCE((SELECT json_agg(l ORDER BY l.created_at DESC) FROM service_locations l WHERE l.customer_id = c.id), '[]') AS addresses,
+                  COALESCE((SELECT json_agg(a ORDER BY a.created_at DESC) FROM installed_assets a WHERE a.customer_id = c.id), '[]') AS assets,
+                  COALESCE((SELECT json_agg(o ORDER BY o.created_at DESC) FROM orders o WHERE o.customer_id = c.id), '[]') AS orders
+           FROM customers c LEFT JOIN users u ON u.id = c.user_id WHERE c.id = $1 LIMIT 1`,
+          [id]
+        );
+        return rows[0] || null;
+      },
+      async create({ name, mobile, cityId, addressText }) {
+        if (!db.connect) throw new Error('Database transaction support is required');
+        const client = await db.connect();
+        try {
+          await client.query('BEGIN');
+          const userResult = await client.query(
+            `INSERT INTO users (mobile, role) VALUES ($1, 'customer')
+             ON CONFLICT (mobile) DO NOTHING RETURNING id`, [mobile]
+          );
+          if (!userResult.rows[0]) throw new Error('Customer mobile already exists');
+          const customerResult = await client.query(
+            'INSERT INTO customers (user_id, name) VALUES ($1, $2) RETURNING id, name, created_at',
+            [userResult.rows[0].id, name]
+          );
+          const customer = customerResult.rows[0];
+          if (cityId || addressText) {
+            await client.query(
+              'INSERT INTO service_locations (customer_id, city_id, address_text) VALUES ($1, $2, $3)',
+              [customer.id, cityId || 'riyadh', addressText || '']
+            );
+          }
+          await client.query('COMMIT');
+          return { ...customer, mobile };
+        } catch (error) {
+          await client.query('ROLLBACK');
+          throw error;
+        } finally { client.release(); }
+      },
       async findByIdentity(source, identityKey) {
         const { rows } = await db.query(
           `SELECT c.* FROM customers c
