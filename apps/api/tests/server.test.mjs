@@ -5,6 +5,19 @@ import { createApiServer } from '../src/server.mjs';
 const sessionToken = 'subil-test-session-token-00000001';
 const authHeaders = { authorization: `Bearer ${sessionToken}` };
 
+test('CORS preflight allows only configured admin origins', async (t) => {
+  const server = createApiServer({ db:null, corsOrigins:['https://admin.subil.store'] });
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const {port}=server.address();
+  const allowed=await fetch(`http://127.0.0.1:${port}/api/v1/customers`,{method:'OPTIONS',headers:{origin:'https://admin.subil.store','access-control-request-method':'GET','access-control-request-headers':'authorization'}});
+  assert.equal(allowed.status,204);
+  assert.equal(allowed.headers.get('access-control-allow-origin'),'https://admin.subil.store');
+  const blocked=await fetch(`http://127.0.0.1:${port}/api/v1/customers`,{method:'OPTIONS',headers:{origin:'https://evil.example','access-control-request-method':'GET'}});
+  assert.equal(blocked.status,403);
+  assert.equal(blocked.headers.get('access-control-allow-origin'),null);
+});
+
 function withSession(db, { userId = 'user-1', role = 'technician' } = {}) {
   return {
     ...db,
