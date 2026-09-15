@@ -37,6 +37,10 @@ OTP uses normalized Saudi E.164 mobile numbers (`+9665XXXXXXXX`), six-digit code
 - GET `/jobs/:id/candidates?from=<ISO>&to=<ISO>&limit=10` — eligible technicians ranked by distance, workload and rating
 - POST `/jobs/:id/assign` — validates city, skill, availability and schedule conflicts before audited assignment
 - POST `/jobs/:id/reassign` — requires a reason and preserves the previous assignment in the audit log
+- GET `/jobs/escalations?status=open|resolved|all&limit=20&offset=0` — prioritized SLA escalation queue
+- GET `/jobs/escalations/stats` — open escalation counters by severity and resolved-today count
+- POST `/jobs/escalations/run` — idempotently detects late active jobs at level 1 (under two hours), level 2 (two hours) or level 3 (four hours)
+- POST `/jobs/:id/escalations/resolve` — resolves every open escalation for a job with a required reason and audit record
 - GET/PATCH `/jobs/:id`
 - POST `/jobs/:id/assign`
 - POST `/jobs/:id/schedule`
@@ -74,7 +78,11 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - GET/POST `/compensation-policies`
 - GET `/technicians/:id/accruals`
 - POST `/settlements`
+- GET `/settlements?status=all|pending_approval|approved|rejected|paid&q=&limit=20&offset=0` — searchable finance worklist with order margin, policy and technician payout inputs
+- GET `/settlements/stats` — approval counts and pending, approved and paid-this-month amounts
 - POST `/settlements/:id/approve` — finance-authorized PostgreSQL transaction that approves once, credits the technician wallet idempotently, and writes an audit event
+- POST `/settlements/:id/reject` — reason-required finance rejection with an audit event
+- POST `/settlements/:id/paid` — records an external payment reference, closes the settlement and marks its wallet credit paid atomically
 
 ## Notifications
 - POST `/notifications/events`
