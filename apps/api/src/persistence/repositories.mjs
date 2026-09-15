@@ -331,6 +331,45 @@ export function createRepositories(db) {
     },
 
     assets: {
+      async maintenanceStats() {
+        const { rows } = await db.query(
+          `SELECT COUNT(*) FILTER (WHERE status = 'active')::integer AS active,
+                  COUNT(*) FILTER (WHERE status = 'active' AND next_maintenance_at < now())::integer AS overdue,
+                  COUNT(*) FILTER (WHERE status = 'active' AND next_maintenance_at >= now() AND next_maintenance_at < now() + interval '7 days')::integer AS due_7_days,
+                  COUNT(*) FILTER (WHERE status = 'active' AND next_maintenance_at >= now() AND next_maintenance_at < now() + interval '30 days')::integer AS due_30_days
+           FROM installed_assets`
+        );
+        return rows[0] || { active: 0, overdue: 0, due_7_days: 0, due_30_days: 0 };
+      },
+      async listMaintenance({ query = '', window = 'all', limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT a.id, a.customer_id, a.product_id, a.serial_number, a.last_maintenance_at,
+                  a.next_maintenance_at, a.warranty_ends_at, a.status,
+                  c.name AS customer_name, u.mobile AS customer_mobile,
+                  location.city_id, location.address_text,
+                  CEIL(EXTRACT(EPOCH FROM (a.next_maintenance_at - now())) / 86400)::integer AS days_until_due,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM installed_assets a
+           JOIN customers c ON c.id = a.customer_id
+           LEFT JOIN users u ON u.id = c.user_id
+           LEFT JOIN LATERAL (
+             SELECT city_id, address_text FROM service_locations
+             WHERE customer_id = c.id ORDER BY created_at DESC LIMIT 1
+           ) location ON true
+           WHERE a.status = 'active'
+             AND ($1 = '' OR c.name ILIKE '%' || $1 || '%' OR u.mobile LIKE '%' || $1 || '%'
+                  OR a.product_id ILIKE '%' || $1 || '%' OR a.serial_number ILIKE '%' || $1 || '%')
+             AND CASE $2
+               WHEN 'overdue' THEN a.next_maintenance_at < now()
+               WHEN '7d' THEN a.next_maintenance_at >= now() AND a.next_maintenance_at < now() + interval '7 days'
+               WHEN '30d' THEN a.next_maintenance_at >= now() AND a.next_maintenance_at < now() + interval '30 days'
+               ELSE true
+             END
+           ORDER BY a.next_maintenance_at ASC, a.id ASC LIMIT $3 OFFSET $4`,
+          [query.trim(), window, limit, offset]
+        );
+        return rows;
+      },
       async dueBefore(at) {
         const { rows } = await db.query(
           `SELECT * FROM installed_assets
