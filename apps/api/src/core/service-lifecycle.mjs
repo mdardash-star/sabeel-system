@@ -37,7 +37,7 @@ export function closeService({ job, evidence, settlementInput, settlementId, now
     job: result.job,
     evidence: result.evidence,
     settlement: pendingSettlement,
-    audit: result.audit,
+    auditEvents: result.auditEvents,
     notification: notificationForJobStatus(result.job, 'completed')
   };
 }
