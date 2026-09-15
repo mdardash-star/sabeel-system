@@ -5,6 +5,9 @@
   "description": "SUBIL OS business operating platform",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
+    "dev:admin": "npm run dev --workspace @subil/admin",
+    "build": "npm run build:admin",
+    "build:admin": "npm run build --workspace @subil/admin",
     "typecheck": "tsc --noEmit",
     "test": "node --test"
   },

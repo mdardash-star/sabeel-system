@@ -34,4 +34,12 @@
 لا يتم نشر كود تجريبي مباشرة على `subil.store`. أي تطوير يمر ببيئة تطوير/اختبار ثم مراجعة قبل الإنتاج.
 
 ## الحالة
-Foundation / Architecture phase.
+Core API foundation + Admin Web preview.
+
+## معاينة لوحة الإدارة
+```bash
+npm install
+npm run dev:admin
+```
+
+ثم افتح `http://localhost:3000`. تستخدم واجهة المعاينة بيانات تجريبية فقط ولا تتصل بالمتجر المباشر.
