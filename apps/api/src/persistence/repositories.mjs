@@ -346,6 +346,38 @@ export function createRepositories(db) {
       }
     },
 
+    escalations: {
+      async stats() {
+        const { rows } = await db.query(
+          `SELECT COUNT(*) FILTER (WHERE status = 'open')::integer AS open,
+                  COUNT(*) FILTER (WHERE status = 'open' AND level = 1)::integer AS level_1,
+                  COUNT(*) FILTER (WHERE status = 'open' AND level = 2)::integer AS level_2,
+                  COUNT(*) FILTER (WHERE status = 'open' AND level = 3)::integer AS level_3,
+                  COUNT(*) FILTER (WHERE status = 'resolved' AND resolved_at >= date_trunc('day', now()))::integer AS resolved_today
+           FROM job_escalations`
+        );
+        return rows[0] || { open: 0, level_1: 0, level_2: 0, level_3: 0, resolved_today: 0 };
+      },
+      async list({ status = 'open', limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT e.id, e.job_id, e.level, e.minutes_late, e.status, e.detected_at,
+                  e.resolved_at, e.resolution_reason, j.status AS job_status, j.scheduled_at,
+                  j.technician_id, c.name AS customer_name, o.external_order_id,
+                  l.address_text, COUNT(*) OVER()::integer AS total_count
+           FROM job_escalations e
+           JOIN service_jobs j ON j.id = e.job_id
+           JOIN customers c ON c.id = j.customer_id
+           JOIN orders o ON o.id = j.order_id
+           LEFT JOIN service_locations l ON l.id = j.service_location_id
+           WHERE ($1 = 'all' OR e.status = $1)
+           ORDER BY CASE e.status WHEN 'open' THEN 0 ELSE 1 END, e.level DESC, e.detected_at ASC
+           LIMIT $2 OFFSET $3`,
+          [status, limit, offset]
+        );
+        return rows;
+      }
+    },
+
     jobs: {
       async operationsStats() {
         const { rows } = await db.query(
@@ -445,6 +477,44 @@ export function createRepositories(db) {
     },
 
     settlements: {
+      async operationsStats() {
+        const { rows } = await db.query(
+          `SELECT COUNT(*)::integer AS total,
+                  COUNT(*) FILTER (WHERE status = 'pending_approval')::integer AS pending_approval,
+                  COUNT(*) FILTER (WHERE status = 'approved')::integer AS approved,
+                  COUNT(*) FILTER (WHERE status = 'rejected')::integer AS rejected,
+                  COUNT(*) FILTER (WHERE status = 'paid')::integer AS paid,
+                  COALESCE(SUM(payout_amount) FILTER (WHERE status = 'pending_approval'), 0)::numeric(12,2) AS pending_amount,
+                  COALESCE(SUM(payout_amount) FILTER (WHERE status = 'approved'), 0)::numeric(12,2) AS approved_amount,
+                  COALESCE(SUM(payout_amount) FILTER (WHERE status = 'paid' AND approved_at >= date_trunc('month', now())), 0)::numeric(12,2) AS paid_this_month
+           FROM technician_settlements`
+        );
+        return rows[0] || { total: 0, pending_approval: 0, approved: 0, rejected: 0, paid: 0, pending_amount: 0, approved_amount: 0, paid_this_month: 0 };
+      },
+      async listForOperations({ query = '', status = 'all', limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT s.id, s.job_id, s.technician_id, u.mobile AS technician_mobile,
+                  j.customer_id, c.name AS customer_name, o.external_order_id,
+                  s.sale_ex_vat, s.product_cost, s.other_costs, s.margin,
+                  s.policy_version, s.commission_rate, s.fixed_amount, s.payout_amount,
+                  s.status, s.approved_by, s.approved_at, s.created_at,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM technician_settlements s
+           JOIN technicians t ON t.id = s.technician_id
+           JOIN users u ON u.id = t.user_id
+           JOIN service_jobs j ON j.id = s.job_id
+           JOIN customers c ON c.id = j.customer_id
+           JOIN orders o ON o.id = j.order_id
+           WHERE ($1 = '' OR s.id::text ILIKE '%' || $1 || '%' OR s.job_id::text ILIKE '%' || $1 || '%'
+                  OR u.mobile LIKE '%' || $1 || '%' OR c.name ILIKE '%' || $1 || '%'
+                  OR o.external_order_id ILIKE '%' || $1 || '%')
+             AND ($2 = 'all' OR s.status = $2)
+           ORDER BY CASE s.status WHEN 'pending_approval' THEN 0 WHEN 'approved' THEN 1 WHEN 'rejected' THEN 2 ELSE 3 END,
+                    s.created_at ASC, s.id ASC LIMIT $3 OFFSET $4`,
+          [query.trim(), status, limit, offset]
+        );
+        return rows;
+      },
       async findById(id) {
         const { rows } = await db.query('SELECT * FROM technician_settlements WHERE id = $1 LIMIT 1', [id]);
         return rows[0] || null;
