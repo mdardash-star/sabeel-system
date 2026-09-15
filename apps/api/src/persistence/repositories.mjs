@@ -17,6 +17,15 @@ export function createRepositories(db) {
     },
 
     customers: {
+      async stats() {
+        const { rows } = await db.query(
+          `SELECT COUNT(*)::integer AS total,
+                  COUNT(*) FILTER (WHERE c.created_at >= date_trunc('month', now()))::integer AS new_this_month,
+                  COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id))::integer AS with_orders
+           FROM customers c`
+        );
+        return rows[0] || { total: 0, new_this_month: 0, with_orders: 0 };
+      },
       async list({ query = '', limit = 20, offset = 0 } = {}) {
         const search = query.trim();
         const { rows } = await db.query(
