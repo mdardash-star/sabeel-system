@@ -34,6 +34,15 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
   }
 
   const customerMatch = url.match(/^\/api\/v1\/customers\/([^/]+)$/);
+  const addressMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/addresses$/);
+  if (method === 'POST' && addressMatch) {
+    if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
+    const cityId = cleanOptional(body.cityId);
+    const addressText = cleanOptional(body.addressText);
+    if (!cityId || cityId.length > 100 || addressText.length < 3) return response(400, { error: 'invalid_address' });
+    const address = await createRepositories(db).customers.addAddress(addressMatch[1], { cityId, addressText });
+    return address ? response(201, { address }) : response(404, { error: 'customer_not_found' });
+  }
   if (method === 'PATCH' && customerMatch) {
     if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
     const hasName = Object.hasOwn(body, 'name');
