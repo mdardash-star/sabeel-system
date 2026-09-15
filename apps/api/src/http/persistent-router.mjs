@@ -39,6 +39,28 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     }
   }
 
+  if (method === 'GET' && url === '/api/v1/maintenance/stats') {
+    if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
+    const stats = await createRepositories(db).assets.maintenanceStats();
+    return response(200, { stats });
+  }
+
+  if (method === 'GET' && url === '/api/v1/maintenance/assets') {
+    if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const window = context.window || 'all';
+    if (!['all', 'overdue', '7d', '30d'].includes(window)) return response(400, { error: 'invalid_maintenance_window' });
+    const rows = await createRepositories(db).assets.listMaintenance({
+      ...pagination, window, query: context.query || ''
+    });
+    return response(200, {
+      assets: rows.map(({ total_count, ...asset }) => asset),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 },
+      window
+    });
+  }
+
   const customerMatch = url.match(/^\/api\/v1\/customers\/([^/]+)$/);
   const timelineMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/timeline$/);
   if (method === 'GET' && timelineMatch) {
