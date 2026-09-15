@@ -1,6 +1,6 @@
 import { can } from '../auth/rbac.mjs';
 import { createRepositories } from '../persistence/repositories.mjs';
-import { approveSettlementAndCreditWallet, completeTechnicianJob, transitionTechnicianJob } from '../persistence/transactions.mjs';
+import { approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, transitionTechnicianJob } from '../persistence/transactions.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
@@ -72,6 +72,21 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       pagination: { ...pagination, total: rows[0]?.total_count || 0 }
     });
   }
+  const assetHistoryMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/assets\/([^/]+)\/history$/);
+  if (method === 'GET' && assetHistoryMatch) {
+    if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const repos = createRepositories(db);
+    const asset = await repos.customers.findAsset(assetHistoryMatch[1], assetHistoryMatch[2]);
+    if (!asset) return response(404, { error: 'asset_not_found' });
+    const rows = await repos.customers.listAssetHistory(assetHistoryMatch[1], assetHistoryMatch[2], pagination);
+    return response(200, {
+      customerId: assetHistoryMatch[1], assetId: assetHistoryMatch[2],
+      maintenance: rows.map(({ total_count, ...item }) => item),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 }
+    });
+  }
   const addressMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/addresses$/);
   if (method === 'POST' && addressMatch) {
     if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
@@ -100,6 +115,24 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       nextMaintenanceAt: addUtcMonths(installedAt, maintenanceIntervalMonths)
     });
     return asset ? response(201, { asset }) : response(404, { error: 'customer_not_found' });
+  }
+  const maintenanceMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/assets\/([^/]+)\/maintenance$/);
+  if (method === 'POST' && maintenanceMatch) {
+    if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    const completedAt = parseDate(body.completedAt);
+    const notes = cleanOptional(body.notes);
+    if (!completedAt || notes.length > 500) return response(400, { error: 'invalid_maintenance' });
+    try {
+      const result = await completeAssetMaintenance(db, {
+        customerId: maintenanceMatch[1], assetId: maintenanceMatch[2],
+        actorUserId: context.userId, completedAt, notes
+      });
+      return result ? response(200, result) : response(404, { error: 'asset_not_found' });
+    } catch (error) {
+      if (error.message === 'Asset is not active') return response(409, { error: 'asset_not_active' });
+      throw error;
+    }
   }
   if (method === 'PATCH' && customerMatch) {
     if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
