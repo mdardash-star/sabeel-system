@@ -2,9 +2,9 @@ const permissions = {
   customer: ['customer:self:read'],
   technician: ['jobs:assigned:read', 'jobs:assigned:update', 'evidence:create'],
   dispatcher: ['jobs:read', 'jobs:assign', 'jobs:schedule', 'customers:service-view'],
-  support: ['customers:read', 'orders:read', 'jobs:read'],
+  support: ['customers:read', 'customers:create', 'orders:read', 'jobs:read'],
   finance: ['settlements:read', 'settlements:approve', 'reports:finance'],
-  branch_manager: ['jobs:read', 'jobs:assign', 'jobs:schedule', 'customers:read', 'settlements:read'],
+  branch_manager: ['jobs:read', 'jobs:assign', 'jobs:schedule', 'customers:read', 'customers:create', 'settlements:read'],
   admin: ['*'],
   super_admin: ['*']
 };
