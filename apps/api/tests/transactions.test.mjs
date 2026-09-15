@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { withTransaction, approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, transitionTechnicianJob } from '../src/persistence/transactions.mjs';
+import { withTransaction, approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, transitionTechnicianJob, updateAssetStatus } from '../src/persistence/transactions.mjs';
 
 function poolWithClient(client) {
   return { connect: async () => client };
@@ -146,5 +146,14 @@ test('asset maintenance updates schedule and records history and audit atomicall
   assert.equal(result.asset.next_maintenance_at,'2027-03-30T00:00:00.000Z');
   assert.equal(result.maintenance.id,'maintenance-1');
   assert.ok(calls.some(call=>/asset\.maintenance_completed/.test(call.sql)));
+  assert.ok(calls.some(call=>call.sql==='COMMIT'));
+});
+
+test('asset status change is scoped and audited atomically',async()=>{
+  const calls=[];
+  const client={query:async(sql,params)=>{calls.push({sql,params});if(sql==='BEGIN'||sql==='COMMIT')return{rows:[]};if(/FROM installed_assets/.test(sql))return{rows:[{id:'asset-1',customer_id:'customer-1',status:'active'}]};if(/UPDATE installed_assets/.test(sql))return{rows:[{id:'asset-1',customer_id:'customer-1',status:'inactive'}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error('Unexpected query');},release(){}};
+  const asset=await updateAssetStatus(poolWithClient(client),{customerId:'customer-1',assetId:'asset-1',actorUserId:'support-1',status:'inactive'});
+  assert.equal(asset.status,'inactive');
+  assert.ok(calls.some(call=>/asset\.status_changed/.test(call.sql)));
   assert.ok(calls.some(call=>call.sql==='COMMIT'));
 });
