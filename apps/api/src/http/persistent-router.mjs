@@ -5,6 +5,12 @@ import { approveSettlementAndCreditWallet, completeTechnicianJob, transitionTech
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
 
+  if (method === 'GET' && url === '/api/v1/customers/stats') {
+    if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
+    const stats = await createRepositories(db).customers.stats();
+    return response(200, { stats });
+  }
+
   if (method === 'GET' && url === '/api/v1/customers') {
     if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
     const pagination = parsePagination(context);
