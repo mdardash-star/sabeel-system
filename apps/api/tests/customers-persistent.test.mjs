@@ -46,3 +46,19 @@ test('customer details return CRM aggregates to authorized role', async () => {
   assert.equal(result.status,200);
   assert.equal(result.data.customer.id,'c1');
 });
+
+test('support updates customer name and mobile atomically', async () => {
+  const calls=[];
+  const client={query:async(sql,params)=>{calls.push([sql,params]);if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1',user_id:'u1',name:'قديم',mobile:'+966500000000'}]};if(/UPDATE customers/.test(sql))return{rows:[{id:'c1',name:'الاسم الجديد'}]};return{rows:[]};},release(){calls.push(['RELEASE']);}};
+  const result=await routePersistentRequest({method:'PATCH',url:'/api/v1/customers/c1',role:'support',body:{name:'الاسم الجديد',mobile:'0551234567'},db:{query:async()=>({rows:[]}),connect:async()=>client}});
+  assert.equal(result.status,200);
+  assert.equal(result.data.customer.mobile,'+966551234567');
+  assert.ok(calls.some(([sql])=>/UPDATE users/.test(sql)));
+  assert.equal(calls.at(-2)[0],'COMMIT');
+});
+
+test('customer update validates payload before database access', async () => {
+  const db={query:async()=>{throw new Error('must not query');}};
+  const result=await routePersistentRequest({method:'PATCH',url:'/api/v1/customers/c1',role:'support',body:{mobile:'123'},db});
+  assert.deepEqual(result,{status:400,data:{error:'invalid_customer_update'}});
+});
