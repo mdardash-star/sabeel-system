@@ -147,6 +147,36 @@ test('live HTTP operations jobs forward search status and pagination',async(t)=>
   const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.jobs[0].status,'in_progress');assert.deepEqual(payload.pagination,{limit:5,offset:10,total:7});
 });
 
+test('live HTTP escalation queue is authenticated and prioritized',async(t)=>{
+  const db={query:async(sql,params)=>{assert.match(sql,/job_escalations/);assert.deepEqual(params,['open',5,0]);return{rows:[{id:'e1',job_id:'j1',level:3,total_count:1}]};}};
+  const server=createApiServer({db:withSession(db,{role:'dispatcher'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/jobs/escalations?status=open&limit=5`,{headers:authHeaders});const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.escalations[0].level,3);
+});
+
+test('live HTTP dispatcher runs idempotent SLA detection',async(t)=>{
+  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/FROM service_jobs/.test(sql))return{rows:[{id:'j1',minutes_late:130}]};if(/INSERT INTO job_escalations/.test(sql))return{rows:[{id:'e1',job_id:'j1',level:params[1],status:'open'}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
+  const db={query:async()=>({rows:[]}),connect:async()=>client},server=createApiServer({db:withSession(db,{role:'dispatcher',userId:'dispatcher-1'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/jobs/escalations/run`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({limit:20})});const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.created[0].level,2);
+});
+
+test('live HTTP finance worklist forwards status and pagination',async(t)=>{
+  const db={query:async(sql,params)=>{assert.match(sql,/technician_mobile/);assert.deepEqual(params,['سبيل','pending_approval',5,10]);return{rows:[{id:'settlement-1',customer_name:'سبيل',total_count:8}]};}};
+  const server=createApiServer({db:withSession(db,{role:'finance'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/settlements?status=pending_approval&q=${encodeURIComponent('سبيل')}&limit=5&offset=10`,{headers:authHeaders});const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.settlements[0].id,'settlement-1');assert.equal(payload.pagination.total,8);
+});
+
+test('live HTTP finance rejects settlement with audited reason',async(t)=>{
+  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/SELECT id, technician_id, payout_amount, status/.test(sql))return{rows:[{id:'s1',technician_id:'t1',payout_amount:'75',status:'pending_approval'}]};if(/UPDATE technician_settlements/.test(sql))return{rows:[{id:'s1',status:'rejected'}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
+  const db={query:async()=>({rows:[]}),connect:async()=>client},server=createApiServer({db:withSession(db,{role:'finance',userId:'finance-1'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/settlements/s1/reject`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({reason:'تكلفة ناقصة'})});assert.equal(response.status,200);assert.equal((await response.json()).settlement.status,'rejected');
+});
+
+test('live HTTP finance records settlement payment',async(t)=>{
+  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/SELECT id, technician_id, payout_amount, status/.test(sql))return{rows:[{id:'s1',technician_id:'t1',payout_amount:'75',status:'approved'}]};if(/UPDATE technician_settlements/.test(sql))return{rows:[{id:'s1',status:'paid'}]};if(/UPDATE wallet_entries|INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
+  const db={query:async()=>({rows:[]}),connect:async()=>client},server=createApiServer({db:withSession(db,{role:'finance',userId:'finance-1'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/settlements/s1/paid`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({paymentReference:'TRX-100'})});assert.equal(response.status,200);assert.equal((await response.json()).settlement.status,'paid');
+});
+
 test('live HTTP technician roster forwards filters and pagination',async(t)=>{
   const db={query:async(sql,params)=>{assert.match(sql,/on_time_30d/);assert.deepEqual(params,['الرياض','active',5,10]);return{rows:[{id:'tech-1',mobile:'+966500000001',is_active:true,total_count:12}]};}};
   const server=createApiServer({db:withSession(db,{role:'dispatcher'})});
