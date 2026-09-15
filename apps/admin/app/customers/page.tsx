@@ -6,6 +6,7 @@ import PreviewAuthGuard from "../preview-auth-guard";
 const apiBase = process.env.NEXT_PUBLIC_SUBIL_API_URL?.replace(/\/$/, "") || "";
 
 type Customer = { id:string; name:string; phone:string; area:string; orders:number; lastOrder:string; status:"نشط"|"جديد" };
+type CustomerStats = { total:number; new_this_month:number; with_orders:number };
 
 const seed: Customer[] = [
   { id:"CUS-1048", name:"محمد القحطاني", phone:"055 482 1930", area:"الياسمين", orders:6, lastOrder:"اليوم، ١٠:٣٠ ص", status:"نشط" },
@@ -19,7 +20,8 @@ export default function CustomersPage() {
   const [query,setQuery] = useState("");
   const [search,setSearch] = useState("");
   const [page,setPage] = useState(0);
-  const [total,setTotal] = useState(seed.length);
+  const [resultTotal,setResultTotal] = useState(seed.length);
+  const [stats,setStats] = useState<CustomerStats>({total:seed.length,new_this_month:1,with_orders:3});
   const [reloadKey,setReloadKey] = useState(0);
   const [open,setOpen] = useState(false);
   const [error,setError] = useState("");
@@ -56,7 +58,7 @@ export default function CustomersPage() {
           lastOrder:customer.last_order_at?new Intl.DateTimeFormat("ar-SA",{dateStyle:"medium"}).format(new Date(String(customer.last_order_at))):"لا توجد طلبات",
           status:Number(customer.order_count||0)>0?"نشط":"جديد",
         })));
-        setTotal(Number(payload.pagination?.total||0));
+        setResultTotal(Number(payload.pagination?.total||0));
         setPageError("");
       })
       .catch((fetchError:unknown) => {
@@ -66,6 +68,16 @@ export default function CustomersPage() {
       .finally(() => setLoading(false));
     return () => controller.abort();
   },[page,reloadKey,search]);
+
+  useEffect(() => {
+    if(!apiBase)return;
+    const token=sessionStorage.getItem("subil_session"),controller=new AbortController();
+    fetch(`${apiBase}/api/v1/customers/stats`,{headers:{Authorization:`Bearer ${token}`},signal:controller.signal})
+      .then(async response=>{if(!response.ok)throw new Error("تعذر تحميل إحصاءات العملاء.");return response.json();})
+      .then(payload=>setStats(payload.stats))
+      .catch((reason:unknown)=>{if(reason instanceof DOMException&&reason.name==="AbortError")return;setPageError(reason instanceof Error?reason.message:"تعذر تحميل إحصاءات العملاء.");});
+    return()=>controller.abort();
+  },[reloadKey]);
 
   function close(){ setError(""); setOpen(false); }
   async function submit(event:FormEvent<HTMLFormElement>){
@@ -85,7 +97,7 @@ export default function CustomersPage() {
         created={...created,id:String(payload.customer.id),phone:String(payload.customer.mobile||created.phone)};
       }
       if(apiBase){setQuery("");setSearch("");setPage(0);setReloadKey(value=>value+1);}
-      else{setCustomers(list=>[created,...list]);setTotal(value=>value+1);}
+      else{setCustomers(list=>[created,...list]);setResultTotal(value=>value+1);setStats(value=>({...value,total:value.total+1,new_this_month:value.new_this_month+1}));}
       setPageError(""); close();
     } catch(saveError) { setError(saveError instanceof Error?saveError.message:"تعذر حفظ العميل."); }
     finally { setLoading(false); }
@@ -96,11 +108,11 @@ export default function CustomersPage() {
     <div className="customers-wrap">
       <div className="demo-notice"><span>نسخة المعاينة</span> بيانات العملاء تجريبية ولا تؤثر على متجر سبيل المباشر.</div>
       <div className="page-head"><div><p>إدارة علاقات العملاء</p><h1>العملاء</h1><span>عرض بيانات العملاء وسجل طلباتهم</span></div><button className="primary-button" onClick={()=>setOpen(true)}><span>+</span> إضافة عميل</button></div>
-      <section className="customer-stats" aria-label="ملخص العملاء"><article><span>إجمالي العملاء</span><strong>{total.toLocaleString("ar-SA")}</strong></article><article><span>النتائج المعروضة</span><strong>{shown.length.toLocaleString("ar-SA")}</strong></article><article><span>لديهم طلبات</span><strong>{shown.filter(customer=>customer.orders>0).length.toLocaleString("ar-SA")}</strong></article></section>
+      <section className="customer-stats" aria-label="ملخص العملاء"><article><span>إجمالي العملاء</span><strong>{stats.total.toLocaleString("ar-SA")}</strong></article><article><span>عملاء جدد هذا الشهر</span><strong>{stats.new_this_month.toLocaleString("ar-SA")}</strong></article><article><span>لديهم طلبات</span><strong>{stats.with_orders.toLocaleString("ar-SA")}</strong></article></section>
       {pageError&&<div className="api-error" role="alert">{pageError}</div>}
-      <article className="panel"><div className="customers-toolbar"><div><h2>قائمة العملاء</h2><p>{loading?"جارٍ التحميل...":`${total.toLocaleString("ar-SA")} نتيجة`}</p></div><input aria-label="بحث العملاء" value={query} onChange={e=>setQuery(e.target.value)} placeholder="ابحث بالاسم، الجوال، المنطقة أو الرقم..." /></div>
+      <article className="panel"><div className="customers-toolbar"><div><h2>قائمة العملاء</h2><p>{loading?"جارٍ التحميل...":`${(apiBase?resultTotal:shown.length).toLocaleString("ar-SA")} نتيجة`}</p></div><input aria-label="بحث العملاء" value={query} onChange={e=>setQuery(e.target.value)} placeholder="ابحث بالاسم، الجوال، المنطقة أو الرقم..." /></div>
         <div className="table-wrap"><table><thead><tr><th>العميل</th><th>الجوال</th><th>المنطقة</th><th>الطلبات</th><th>آخر طلب</th><th>الحالة</th></tr></thead><tbody>{shown.map(c=><tr key={c.id}><td><a className="customer-name-link" href={`/customers/${c.id}`}><strong>{c.name}</strong><small>{c.id}</small></a></td><td dir="ltr">{c.phone}</td><td>{c.area}</td><td>{c.orders.toLocaleString("ar-SA")}</td><td>{c.lastOrder}</td><td><span className={`status ${c.status==="نشط"?"done":"scheduled"}`}>{c.status}</span></td></tr>)}</tbody></table>{!shown.length&&<div className="empty-state">لا توجد نتائج مطابقة للبحث.</div>}</div>
-        {apiBase&&total>20&&<nav className="customers-pagination" aria-label="صفحات العملاء"><button className="secondary-button" disabled={loading||page===0} onClick={()=>setPage(value=>Math.max(0,value-1))}>السابق</button><span>صفحة {(page+1).toLocaleString("ar-SA")} من {Math.ceil(total/20).toLocaleString("ar-SA")}</span><button className="secondary-button" disabled={loading||(page+1)*20>=total} onClick={()=>setPage(value=>value+1)}>التالي</button></nav>}
+        {apiBase&&resultTotal>20&&<nav className="customers-pagination" aria-label="صفحات العملاء"><button className="secondary-button" disabled={loading||page===0} onClick={()=>setPage(value=>Math.max(0,value-1))}>السابق</button><span>صفحة {(page+1).toLocaleString("ar-SA")} من {Math.ceil(resultTotal/20).toLocaleString("ar-SA")}</span><button className="secondary-button" disabled={loading||(page+1)*20>=resultTotal} onClick={()=>setPage(value=>value+1)}>التالي</button></nav>}
       </article>
     </div>
     {open&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!loading)close();}}><section className="customer-modal" role="dialog" aria-modal="true" aria-labelledby="add-title"><div className="modal-head"><div><h2 id="add-title">إضافة عميل جديد</h2><p>أدخل البيانات الأساسية للعميل</p></div><button aria-label="إغلاق" disabled={loading} onClick={close}>×</button></div><form onSubmit={submit}><label>اسم العميل<input name="name" autoFocus disabled={loading} placeholder="الاسم الكامل" /></label><label>رقم الجوال<input name="phone" dir="ltr" inputMode="numeric" disabled={loading} placeholder="05XXXXXXXX" /></label><label>المنطقة<input name="area" disabled={loading} placeholder="مثال: الياسمين" /></label>{error&&<p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" className="secondary-button" disabled={loading} onClick={close}>إلغاء</button><button className="primary-button" disabled={loading} type="submit">{loading?"جارٍ الحفظ...":"حفظ العميل"}</button></div></form></section></div>}
