@@ -37,6 +37,9 @@ test('paid order stays linked to SUBIL customer through installation and finance
   assert.equal(closed.settlement.margin, 200);
   assert.equal(closed.settlement.payoutAmount, 60);
   assert.equal(closed.notification.type, 'service.completed');
+  assert.equal(closed.auditEvents.length, 2);
+  assert.equal(closed.auditEvents[0].action, 'job.completed');
+  assert.equal(closed.auditEvents[1].action, 'settlement.created');
 
   const finance = approveServiceSettlement({ settlement: closed.settlement, approverUserId: 'finance-1', now: new Date('2026-09-15T10:05:00Z') });
   assert.equal(finance.settlement.status, 'approved');
