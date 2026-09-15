@@ -14,6 +14,7 @@ OTP uses normalized Saudi E.164 mobile numbers (`+9665XXXXXXXX`), six-digit code
 
 ## Customers / CRM
 - GET/POST `/customers`
+- GET `/customers/stats`
 - GET/PATCH `/customers/:id`
 - GET/POST `/customers/:id/addresses`
 - GET `/customers/:id/timeline`
