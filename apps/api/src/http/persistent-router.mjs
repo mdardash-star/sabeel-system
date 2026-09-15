@@ -1,7 +1,8 @@
 import { can } from '../auth/rbac.mjs';
 import { createRepositories } from '../persistence/repositories.mjs';
-import { approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, setTechnicianActive, transitionTechnicianJob, updateAssetStatus } from '../persistence/transactions.mjs';
+import { approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, markSettlementPaid, rejectSettlement, setTechnicianActive, transitionTechnicianJob, updateAssetStatus } from '../persistence/transactions.mjs';
 import { assignPersistentJob, listDispatchCandidates, reassignPersistentJob } from '../dispatch/persistent-dispatch.mjs';
+import { detectJobEscalations, resolveJobEscalations } from '../jobs/escalations.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
@@ -86,6 +87,44 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     });
   }
 
+  if (method === 'GET' && url === '/api/v1/jobs/escalations/stats') {
+    if (!can(role, 'jobs:read')) return response(403, { error: 'forbidden' });
+    const stats = await createRepositories(db).escalations.stats();
+    return response(200, { stats });
+  }
+
+  if (method === 'GET' && url === '/api/v1/jobs/escalations') {
+    if (!can(role, 'jobs:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const status = context.status || 'open';
+    if (!['all', 'open', 'resolved'].includes(status)) return response(400, { error: 'invalid_escalation_status_filter' });
+    const rows = await createRepositories(db).escalations.list({ ...pagination, status });
+    return response(200, {
+      escalations: rows.map(({ total_count, ...item }) => item),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 }, status
+    });
+  }
+
+  if (method === 'POST' && url === '/api/v1/jobs/escalations/run') {
+    if (!can(role, 'jobs:assign')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    const limit = Number(body.limit ?? 100);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) return response(400, { error: 'invalid_escalation_limit' });
+    const result = await detectJobEscalations(db, { actorUserId: context.userId, limit });
+    return response(200, result);
+  }
+
+  const escalationResolveMatch = url.match(/^\/api\/v1\/jobs\/([^/]+)\/escalations\/resolve$/);
+  if (method === 'POST' && escalationResolveMatch) {
+    if (!can(role, 'jobs:assign')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    const reason = cleanOptional(body.reason);
+    if (reason.length < 3) return response(400, { error: 'resolution_reason_required' });
+    const escalations = await resolveJobEscalations(db, { jobId: escalationResolveMatch[1], reason, actorUserId: context.userId });
+    return escalations.length ? response(200, { escalations }) : response(404, { error: 'open_escalation_not_found' });
+  }
+
   if (method === 'GET' && url === '/api/v1/technicians/stats') {
     if (!can(role, 'technicians:read')) return response(403, { error: 'forbidden' });
     const stats = await createRepositories(db).technicians.operationsStats();
@@ -103,6 +142,27 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     });
     return response(200, {
       technicians: rows.map(({ total_count, ...technician }) => technician),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 }, status
+    });
+  }
+
+  if (method === 'GET' && url === '/api/v1/settlements/stats') {
+    if (!can(role, 'settlements:read')) return response(403, { error: 'forbidden' });
+    const stats = await createRepositories(db).settlements.operationsStats();
+    return response(200, { stats });
+  }
+
+  if (method === 'GET' && url === '/api/v1/settlements') {
+    if (!can(role, 'settlements:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const status = context.status || 'all';
+    if (!['all', 'pending_approval', 'approved', 'rejected', 'paid'].includes(status)) return response(400, { error: 'invalid_settlement_status_filter' });
+    const rows = await createRepositories(db).settlements.listForOperations({
+      ...pagination, status, query: context.query || ''
+    });
+    return response(200, {
+      settlements: rows.map(({ total_count, ...settlement }) => settlement),
       pagination: { ...pagination, total: rows[0]?.total_count || 0 }, status
     });
   }
@@ -335,6 +395,36 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     } catch (error) {
       if (error.message === 'Settlement not found') return response(404, { error: 'settlement_not_found' });
       if (error.message === 'Settlement is not approvable') return response(409, { error: 'settlement_not_approvable' });
+      throw error;
+    }
+  }
+
+  const rejectMatch = url.match(/^\/api\/v1\/settlements\/([^/]+)\/reject$/);
+  if (method === 'POST' && rejectMatch) {
+    if (!can(role, 'settlements:approve')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    const reason = cleanOptional(body.reason);
+    if (reason.length < 3) return response(400, { error: 'rejection_reason_required' });
+    try {
+      const settlement = await rejectSettlement(db, { settlementId: rejectMatch[1], reason, actorUserId: context.userId });
+      return settlement ? response(200, { settlement }) : response(404, { error: 'settlement_not_found' });
+    } catch (error) {
+      if (error.message === 'Settlement is not rejectable') return response(409, { error: 'settlement_not_rejectable' });
+      throw error;
+    }
+  }
+
+  const paidMatch = url.match(/^\/api\/v1\/settlements\/([^/]+)\/paid$/);
+  if (method === 'POST' && paidMatch) {
+    if (!can(role, 'settlements:approve')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    const paymentReference = cleanOptional(body.paymentReference);
+    if (paymentReference.length < 3) return response(400, { error: 'payment_reference_required' });
+    try {
+      const settlement = await markSettlementPaid(db, { settlementId: paidMatch[1], paymentReference, actorUserId: context.userId });
+      return settlement ? response(200, { settlement }) : response(404, { error: 'settlement_not_found' });
+    } catch (error) {
+      if (error.message === 'Settlement is not payable') return response(409, { error: 'settlement_not_payable' });
       throw error;
     }
   }
