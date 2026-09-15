@@ -82,6 +82,57 @@ test('persistent routes ignore forged role and user headers without Bearer sessi
   assert.equal((await response.json()).error, 'invalid_or_expired_session');
 });
 
+test('live HTTP customer search forwards pagination and query to PostgreSQL', async (t) => {
+  const db={query:async(sql,params)=>{
+    assert.match(sql,/FROM customers c/);
+    assert.deepEqual(params,['نورة',5,10]);
+    return{rows:[{id:'customer-1',name:'نورة',mobile:'+966500000000',total_count:13}]};
+  }};
+  const server=createApiServer({db:withSession(db,{role:'support'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();
+  const response=await fetch(`http://127.0.0.1:${port}/api/v1/customers?q=${encodeURIComponent('نورة')}&limit=5&offset=10`,{headers:authHeaders});
+  const payload=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(payload.customers[0].name,'نورة');
+  assert.deepEqual(payload.pagination,{limit:5,offset:10,total:13});
+});
+
+test('live HTTP customer stats returns authorized CRM totals', async (t) => {
+  const db={query:async(sql)=>{
+    assert.match(sql,/new_this_month/);
+    return{rows:[{total:42,new_this_month:7,with_orders:31}]};
+  }};
+  const server=createApiServer({db:withSession(db,{role:'support'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();
+  const response=await fetch(`http://127.0.0.1:${port}/api/v1/customers/stats`,{headers:authHeaders});
+  assert.equal(response.status,200);
+  assert.deepEqual((await response.json()).stats,{total:42,new_this_month:7,with_orders:31});
+});
+
+for(const collection of ['addresses','assets']){
+  test(`live HTTP customer ${collection} route is authenticated and paginated`,async(t)=>{
+    const db={query:async(sql,params)=>{
+      if(/SELECT c\.id, c\.name/.test(sql))return{rows:[{id:'customer-1',name:'عميل'}]};
+      assert.match(sql,collection==='addresses'?/FROM service_locations/:/FROM installed_assets/);
+      assert.deepEqual(params,['customer-1',5,0]);
+      return{rows:[{id:`${collection}-1`,total_count:1}]};
+    }};
+    const server=createApiServer({db:withSession(db,{role:'branch_manager'})});
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    t.after(()=>new Promise(resolve=>server.close(resolve)));
+    const {port}=server.address();
+    const response=await fetch(`http://127.0.0.1:${port}/api/v1/customers/customer-1/${collection}?limit=5`,{headers:authHeaders});
+    const payload=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(payload[collection][0].id,`${collection}-1`);
+    assert.deepEqual(payload.pagination,{limit:5,offset:0,total:1});
+  });
+}
+
 test('live HTTP technician job details route is connected to PostgreSQL', async (t) => {
   const db = {
     query: async (sql, params) => {
