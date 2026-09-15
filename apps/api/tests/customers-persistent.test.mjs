@@ -77,6 +77,25 @@ test('support adds an address only to an existing customer', async () => {
   assert.equal(result.data.address.id,'a1');
 });
 
+test('support registers a customer asset and derives its next maintenance date', async () => {
+  const db={query:async(sql,params)=>{assert.match(sql,/INSERT INTO installed_assets/);assert.deepEqual(params,['c1','جهاز سبيل 7 مراحل','SBL-100','2026-09-15T00:00:00.000Z','2027-09-15T00:00:00.000Z',6,'2027-03-15T00:00:00.000Z']);return{rows:[{id:'asset-1',product_id:params[1],next_maintenance_at:params[6],status:'active'}]};}};
+  const result=await routePersistentRequest({method:'POST',url:'/api/v1/customers/c1/assets',role:'support',body:{productId:'جهاز سبيل 7 مراحل',serialNumber:'SBL-100',installedAt:'2026-09-15',warrantyEndsAt:'2027-09-15',maintenanceIntervalMonths:6},db});
+  assert.equal(result.status,201);
+  assert.equal(result.data.asset.next_maintenance_at,'2027-03-15T00:00:00.000Z');
+});
+
+test('customer asset registration rejects invalid dates before database access', async () => {
+  const db={query:async()=>{throw new Error('must not query');}};
+  const result=await routePersistentRequest({method:'POST',url:'/api/v1/customers/c1/assets',role:'branch_manager',body:{productId:'جهاز سبيل',installedAt:'2026-09-15',warrantyEndsAt:'2025-09-15',maintenanceIntervalMonths:0},db});
+  assert.deepEqual(result,{status:400,data:{error:'invalid_asset'}});
+});
+
+test('technician cannot register assets for customers', async () => {
+  const db={query:async()=>{throw new Error('must not query');}};
+  const result=await routePersistentRequest({method:'POST',url:'/api/v1/customers/c1/assets',role:'technician',body:{productId:'جهاز سبيل',installedAt:'2026-09-15'},db});
+  assert.deepEqual(result,{status:403,data:{error:'forbidden'}});
+});
+
 test('support reads an ordered customer timeline', async () => {
   const db={query:async(sql,params)=>{if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1'}]};assert.match(sql,/UNION ALL/);assert.match(sql,/ORDER BY occurred_at DESC/);assert.deepEqual(params,['c1',25]);return{rows:[{type:'order',id:'o1',status:'paid'}]};}};
   const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/c1/timeline',role:'support',context:{limit:'25'},db});
