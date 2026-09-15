@@ -9,6 +9,7 @@ type Address={id?:string;city_id?:string;address_text?:string};
 type Asset={id?:string;product_id?:string;serial_number?:string;warranty_ends_at?:string;next_maintenance_at?:string;status?:string};
 type Order={id?:string;external_order_id?:string;created_at?:string;paid_at?:string;total_ex_vat?:string};
 type Customer={id:string;name:string;mobile?:string;created_at?:string;addresses:Address[];assets:Asset[];orders:Order[]};
+type TimelineEvent={id:string;type:"order"|"job"|"notification";reference?:string;status?:string;occurred_at?:string};
 
 const previews:Record<string,Customer>={
   "CUS-1048":{id:"CUS-1048",name:"محمد القحطاني",mobile:"055 482 1930",created_at:"2024-03-10",addresses:[{id:"a1",city_id:"الرياض",address_text:"حي الياسمين"}],assets:[{id:"as1",product_id:"جهاز سبيل ٧ مراحل",serial_number:"SBL-7-29418",warranty_ends_at:"2027-03-10",next_maintenance_at:"2026-12-15",status:"active"}],orders:[{id:"SB-1048",external_order_id:"1048",created_at:"2026-09-15",paid_at:"2026-09-15",total_ex_vat:"1450"},{id:"SB-0982",external_order_id:"982",created_at:"2026-06-12",paid_at:"2026-06-12",total_ex_vat:"620"}]},
@@ -28,12 +29,14 @@ export default function CustomerDetails(){
   const [editError,setEditError]=useState("");
   const [updating,setUpdating]=useState(false);
   const [addressOpen,setAddressOpen]=useState(false);
+  const [timeline,setTimeline]=useState<TimelineEvent[]>([]);
   useEffect(()=>{
     if(!apiBase)return;
     const controller=new AbortController(),token=sessionStorage.getItem("subil_session");
-    fetch(`${apiBase}/api/v1/customers/${encodeURIComponent(id)}`,{headers:{Authorization:`Bearer ${token}`},signal:controller.signal})
-      .then(async response=>{if(!response.ok)throw new Error(response.status===404?"لم يتم العثور على العميل.":response.status===401?"انتهت جلسة الدخول. سجل الدخول مجددًا.":"تعذر تحميل بيانات العميل.");return response.json();})
-      .then(payload=>setCustomer({...payload.customer,addresses:payload.customer.addresses||[],assets:payload.customer.assets||[],orders:payload.customer.orders||[]}))
+    const headers={Authorization:`Bearer ${token}`};
+    Promise.all([fetch(`${apiBase}/api/v1/customers/${encodeURIComponent(id)}`,{headers,signal:controller.signal}),fetch(`${apiBase}/api/v1/customers/${encodeURIComponent(id)}/timeline`,{headers,signal:controller.signal})])
+      .then(async([details,history])=>{if(!details.ok)throw new Error(details.status===404?"لم يتم العثور على العميل.":details.status===401?"انتهت جلسة الدخول. سجل الدخول مجددًا.":"تعذر تحميل بيانات العميل.");const [payload,timelinePayload]=await Promise.all([details.json(),history.ok?history.json():Promise.resolve({timeline:[]})]);return{payload,timelinePayload};})
+      .then(({payload,timelinePayload})=>{setCustomer({...payload.customer,addresses:payload.customer.addresses||[],assets:payload.customer.assets||[],orders:payload.customer.orders||[]});setTimeline(timelinePayload.timeline||[]);})
       .catch((reason:unknown)=>{if(reason instanceof DOMException&&reason.name==="AbortError")return;setError(reason instanceof Error?reason.message:"تعذر تحميل بيانات العميل.");})
       .finally(()=>setLoading(false));
     return()=>controller.abort();
@@ -66,5 +69,6 @@ export default function CustomerDetails(){
       <article className="panel detail-card"><h2>ملخص العميل</h2><div className="detail-metrics"><div><span>إجمالي الطلبات</span><strong>{customer.orders.length.toLocaleString("ar-SA")}</strong></div><div><span>إجمالي القيمة</span><strong>{total.toLocaleString("ar-SA")} ر.س</strong></div></div></article>
       <article className="panel detail-card asset-card"><h2>الأجهزة والأصول</h2>{customer.assets.length?customer.assets.map((asset,index)=><div className="asset-record" key={asset.id||index}><div className="asset-row"><div><strong>{asset.product_id||"جهاز سبيل"}</strong><span>الرقم التسلسلي: {asset.serial_number||"—"}</span></div><span className={`status ${asset.status==="active"?"done":"scheduled"}`}>{asset.status==="active"?"نشط":"غير نشط"}</span></div><p>الضمان حتى {date(asset.warranty_ends_at)} · الصيانة القادمة {date(asset.next_maintenance_at)}</p></div>):<div className="inline-empty">لا توجد أجهزة مسجلة لهذا العميل.</div>}</article>
       <article className="panel detail-orders"><div className="panel-head"><div><h2>آخر الطلبات</h2><p>سجل خدمات العميل</p></div></div>{customer.orders.length?<div className="table-wrap"><table><thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>القيمة</th><th>الحالة</th></tr></thead><tbody>{customer.orders.map((order,index)=><tr key={order.id||index}><td><strong className="order-id">#{order.external_order_id||order.id}</strong></td><td>{date(order.created_at)}</td><td>{Number(order.total_ex_vat||0).toLocaleString("ar-SA")} ر.س</td><td><span className={`status ${order.paid_at?"done":"working"}`}>{order.paid_at?"مدفوع":"قيد المعالجة"}</span></td></tr>)}</tbody></table></div>:<div className="inline-empty">لا توجد طلبات مسجلة لهذا العميل.</div>}</article>
+      {apiBase&&<article className="panel detail-card timeline-card"><h2>سجل النشاط</h2>{timeline.length?<div className="timeline-list">{timeline.map(item=><div key={`${item.type}-${item.id}`}><i/><span>{item.type==="order"?"طلب":item.type==="job"?"مهمة خدمة":"إشعار"} · {item.reference||item.id}<small>{item.status||"—"} · {date(item.occurred_at)}</small></span></div>)}</div>:<div className="inline-empty">لا يوجد نشاط مسجل.</div>}</article>}
     </section></>}{editOpen&&customer&&<div className="modal-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget&&!updating)setEditOpen(false);}}><section className="customer-modal" role="dialog" aria-modal="true" aria-labelledby="edit-title"><div className="modal-head"><div><h2 id="edit-title">تعديل بيانات العميل</h2><p>تحديث الاسم ورقم الجوال</p></div><button aria-label="إغلاق" disabled={updating} onClick={()=>setEditOpen(false)}>×</button></div><form onSubmit={updateCustomer}><label>اسم العميل<input name="name" defaultValue={customer.name} disabled={updating} autoFocus /></label><label>رقم الجوال<input name="mobile" defaultValue={customer.mobile} disabled={updating} dir="ltr" inputMode="tel" /></label>{editError&&<p className="form-error" role="alert">{editError}</p>}<div className="modal-actions"><button type="button" className="secondary-button" disabled={updating} onClick={()=>setEditOpen(false)}>إلغاء</button><button className="primary-button" disabled={updating} type="submit">{updating?"جارٍ الحفظ...":"حفظ التعديلات"}</button></div></form></section></div>}</div></main></PreviewAuthGuard>;
 }
