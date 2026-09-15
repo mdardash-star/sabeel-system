@@ -39,10 +39,15 @@ jobs:
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, latitude, longitude, accuracy_meters, captured_at FROM technician_locations LIMIT 0;"
       - name: Verify technician coordinate constraints
         run: |
-          U=$(psql -h localhost -U subil -d subil_test -tAc "INSERT INTO users(mobile,role) VALUES ('966500000099','technician') RETURNING id;")
-          T=$(psql -h localhost -U subil -d subil_test -tAc "INSERT INTO technicians(user_id,city_id) VALUES ('$U','riyadh') RETURNING id;")
+          U=$(psql -h localhost -U subil -d subil_test -tAc "INSERT INTO users(mobile,role) VALUES ('966500000099','technician') RETURNING id;" | head -n1 | tr -d '[:space:]')
+          T=$(psql -h localhost -U subil -d subil_test -tAc "INSERT INTO technicians(user_id,city_id) VALUES ('$U','riyadh') RETURNING id;" | head -n1 | tr -d '[:space:]')
+          test -n "$U"
+          test -n "$T"
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO technician_locations(technician_id,latitude,longitude,captured_at) VALUES ('$T',24.7136,46.6753,now());"
-          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "UPDATE technician_locations SET latitude=100 WHERE technician_id='$T';"; then exit 1; else exit 0; fi
+          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "UPDATE technician_locations SET latitude=100 WHERE technician_id='$T';"; then
+            echo "Expected latitude constraint to reject 100"
+            exit 1
+          fi
       - name: Verify webhook replay table
         run: |
           psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"
