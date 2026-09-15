@@ -53,6 +53,7 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - GET/POST `/compensation-policies`
 - GET `/technicians/:id/accruals`
 - POST `/settlements`
+- POST `/settlements/:id/approve` — finance-authorized PostgreSQL transaction that approves once, credits the technician wallet idempotently, and writes an audit event
 
 ## Notifications
 - POST `/notifications/events`

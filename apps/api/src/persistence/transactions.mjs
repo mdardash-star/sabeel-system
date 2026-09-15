@@ -169,6 +169,7 @@ export async function approveSettlementAndCreditWallet(db, { settlementId, appro
     }
 
     let approved = settlement;
+    let approvedNow = false;
     if (settlement.status === 'pending_approval') {
       const result = await client.query(
         `UPDATE technician_settlements
@@ -177,6 +178,7 @@ export async function approveSettlementAndCreditWallet(db, { settlementId, appro
         [settlementId, approverUserId]
       );
       approved = result.rows[0];
+      approvedNow = true;
     }
 
     const wallet = await client.query(
@@ -187,11 +189,13 @@ export async function approveSettlementAndCreditWallet(db, { settlementId, appro
       [approved.technician_id, approved.id, approved.payout_amount, `settlement:${approved.id}`]
     );
 
-    await client.query(
-      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, data)
-       VALUES ($1, 'settlement.approved', 'technician_settlement', $2, $3::jsonb)`,
-      [approverUserId, approved.id, JSON.stringify({ technicianId: approved.technician_id, payoutAmount: approved.payout_amount })]
-    );
+    if (approvedNow) {
+      await client.query(
+        `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, data)
+         VALUES ($1, 'settlement.approved', 'technician_settlement', $2, $3::jsonb)`,
+        [approverUserId, approved.id, JSON.stringify({ technicianId: approved.technician_id, payoutAmount: approved.payout_amount })]
+      );
+    }
 
     return { settlement: approved, walletEntry: wallet.rows[0] };
   });

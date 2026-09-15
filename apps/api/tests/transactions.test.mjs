@@ -43,6 +43,24 @@ test('finance approval locks settlement and credits wallet idempotently', async 
   assert.ok(calls.some((c) => /settlement\.approved/.test(c.sql)));
 });
 
+test('retrying an approved settlement does not duplicate wallet credit or approval audit', async () => {
+  const calls = [];
+  const client = {
+    query: async (sql) => {
+      calls.push(sql);
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+      if (/FOR UPDATE/.test(sql)) return { rows: [{ id: 's1', technician_id: 't1', payout_amount: '60.00', status: 'approved' }] };
+      if (/INSERT INTO wallet_entries/.test(sql)) return { rows: [{ id: 'w1', technician_id: 't1', amount: '60.00' }] };
+      throw new Error('Unexpected query');
+    },
+    release() { calls.push('RELEASE'); }
+  };
+  const result = await approveSettlementAndCreditWallet(poolWithClient(client), { settlementId: 's1', approverUserId: 'finance-1' });
+  assert.equal(result.walletEntry.id, 'w1');
+  assert.equal(calls.filter(sql => /INSERT INTO wallet_entries/.test(sql)).length, 1);
+  assert.equal(calls.some(sql => /INSERT INTO audit_log/.test(sql)), false);
+});
+
 test('technician status transition locks ownership updates and writes audit atomically', async () => {
   const calls = [];
   const client = {
