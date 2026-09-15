@@ -2,6 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApiServer } from '../src/server.mjs';
 
+const sessionToken = 'subil-test-session-token-00000001';
+const authHeaders = { authorization: `Bearer ${sessionToken}` };
+
+function withSession(db, { userId = 'user-1', role = 'technician' } = {}) {
+  return {
+    ...db,
+    query: async (sql, params) => {
+      if (/FROM auth_sessions s/.test(sql)) return { rows: [{ user_id: userId, role }] };
+      return db.query(sql, params);
+    }
+  };
+}
+
 test('live HTTP technician endpoint uses PostgreSQL repositories and date query', async (t) => {
   const queries = [];
   const db = {
@@ -11,13 +24,13 @@ test('live HTTP technician endpoint uses PostgreSQL repositories and date query'
       return { rows: [{ id: 'job-1', technician_id: 'tech-1', address_text: 'Riyadh' }] };
     }
   };
-  const server = createApiServer({ db });
+  const server = createApiServer({ db: withSession(db) });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/api/v1/technicians/me/jobs?from=2026-09-15T00%3A00%3A00Z&to=2026-09-16T00%3A00%3A00Z`, {
-    headers: { 'x-subil-role': 'technician', 'x-subil-user-id': 'user-1' }
+    headers: authHeaders
   });
   const payload = await response.json();
 
@@ -36,9 +49,24 @@ test('live HTTP technician endpoint fails closed without database', async (t) =>
 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/api/v1/technicians/me/jobs`, {
-    headers: { 'x-subil-role': 'technician', 'x-subil-user-id': 'user-1' }
+    headers: authHeaders
   });
   assert.equal(response.status, 503);
+});
+
+test('persistent routes ignore forged role and user headers without Bearer session', async (t) => {
+  const db = withSession({ query: async () => { throw new Error('must not query without token'); } });
+  const server = createApiServer({ db });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/v1/settlements/s1/approve`, {
+    method: 'POST',
+    headers: { 'x-subil-role': 'super_admin', 'x-subil-user-id': 'forged-user' }
+  });
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).error, 'invalid_or_expired_session');
 });
 
 test('live HTTP technician job details route is connected to PostgreSQL', async (t) => {
@@ -50,13 +78,13 @@ test('live HTTP technician job details route is connected to PostgreSQL', async 
       return { rows: [{ id: 'job-1', technician_id: 'tech-1', address_text: 'Riyadh' }] };
     }
   };
-  const server = createApiServer({ db });
+  const server = createApiServer({ db: withSession(db) });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/api/v1/technicians/me/jobs/job-1`, {
-    headers: { 'x-subil-role': 'technician', 'x-subil-user-id': 'user-1' }
+    headers: authHeaders
   });
   const payload = await response.json();
   assert.equal(response.status, 200);
@@ -72,13 +100,13 @@ test('live HTTP technician wallet route uses pagination query parameters', async
       return { rows: [{ id: 'w1', amount: '80.00', currency: 'SAR', total_count: 11 }] };
     }
   };
-  const server = createApiServer({ db });
+  const server = createApiServer({ db: withSession(db) });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/api/v1/technicians/me/wallet?limit=5&offset=10`, {
-    headers: { 'x-subil-role': 'technician', 'x-subil-user-id': 'user-1' }
+    headers: authHeaders
   });
   const payload = await response.json();
   assert.equal(response.status, 200);
@@ -101,14 +129,14 @@ test('live HTTP technician status route persists transition and audit', async (t
     query: async () => ({ rows: [{ id: 'tech-1', user_id: 'user-1' }] }),
     connect: async () => client
   };
-  const server = createApiServer({ db });
+  const server = createApiServer({ db: withSession(db) });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/api/v1/technicians/me/jobs/job-1/status`, {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json', 'x-subil-role': 'technician', 'x-subil-user-id': 'user-1' },
+    headers: { 'content-type': 'application/json', ...authHeaders },
     body: JSON.stringify({ status: 'en_route' })
   });
   const payload = await response.json();
@@ -133,14 +161,14 @@ test('live HTTP technician completion route persists evidence and settlement', a
     release() {}
   };
   const db = { query: async () => ({ rows: [{ id: 'tech-1', user_id: 'user-1' }] }), connect: async () => client };
-  const server = createApiServer({ db });
+  const server = createApiServer({ db: withSession(db) });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/api/v1/technicians/me/jobs/job-1/complete`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-subil-role': 'technician', 'x-subil-user-id': 'user-1' },
+    headers: { 'content-type': 'application/json', ...authHeaders },
     body: JSON.stringify({ evidence: [{ mediaType: 'image', storageKey: 'jobs/job-1/after.jpg' }] })
   });
   const payload = await response.json();
@@ -161,14 +189,14 @@ test('live HTTP finance approval route credits technician wallet', async (t) => 
     },
     release() {}
   };
-  const server = createApiServer({ db: { query: async () => ({ rows: [] }), connect: async () => client } });
+  const server = createApiServer({ db: withSession({ query: async () => ({ rows: [] }), connect: async () => client }, { userId: 'finance-1', role: 'finance' }) });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/api/v1/settlements/s1/approve`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-subil-role': 'finance', 'x-subil-user-id': 'finance-1' }
+    headers: { 'content-type': 'application/json', ...authHeaders }
   });
   const payload = await response.json();
   assert.equal(response.status, 200);

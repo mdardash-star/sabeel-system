@@ -5,6 +5,9 @@ INSERT INTO users (id, mobile, role) VALUES
 ('00000000-0000-0000-0000-000000000002', '+966500000002', 'technician'),
 ('00000000-0000-0000-0000-000000000003', '+966500000003', 'finance');
 
+INSERT INTO auth_sessions (user_id, token_hash, expires_at)
+VALUES ('00000000-0000-0000-0000-000000000002', repeat('a', 64), now() + interval '1 hour');
+
 INSERT INTO customers (id, user_id, name) VALUES
 ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Test Customer');
 
@@ -59,6 +62,9 @@ BEGIN
   END IF;
   IF (SELECT product_cost FROM order_costs WHERE order_id='30000000-0000-0000-0000-000000000001') <> 250 THEN
     RAISE EXCEPTION 'order costs missing';
+  END IF;
+  IF (SELECT count(*) FROM auth_sessions WHERE user_id='00000000-0000-0000-0000-000000000002') <> 1 THEN
+    RAISE EXCEPTION 'auth session missing';
   END IF;
 END $$;
 
