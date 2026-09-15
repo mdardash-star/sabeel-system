@@ -233,6 +233,57 @@ export function createRepositories(db) {
     },
 
     jobs: {
+      async operationsStats() {
+        const { rows } = await db.query(
+          `SELECT COUNT(*) FILTER (WHERE status NOT IN ('completed','cancelled'))::integer AS open,
+                  COUNT(*) FILTER (WHERE status = 'pending_assignment')::integer AS pending_assignment,
+                  COUNT(*) FILTER (WHERE status = 'scheduled' AND scheduled_at >= date_trunc('day', now()) AND scheduled_at < date_trunc('day', now()) + interval '1 day')::integer AS scheduled_today,
+                  COUNT(*) FILTER (WHERE status IN ('en_route','arrived','in_progress'))::integer AS in_progress,
+                  COUNT(*) FILTER (WHERE status NOT IN ('completed','cancelled','pending_assignment') AND scheduled_at < now())::integer AS overdue,
+                  COUNT(*) FILTER (WHERE status = 'completed' AND completed_at >= date_trunc('day', now()))::integer AS completed_today
+           FROM service_jobs`
+        );
+        return rows[0] || { open: 0, pending_assignment: 0, scheduled_today: 0, in_progress: 0, overdue: 0, completed_today: 0 };
+      },
+      async listForOperations({ query = '', status = 'all', limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT j.id, j.order_id, o.external_order_id, j.customer_id, c.name AS customer_name,
+                  u.mobile AS customer_mobile, j.service_location_id, l.city_id, l.address_text,
+                  j.technician_id, j.required_skill_code, j.service_duration_minutes,
+                  j.status, j.scheduled_at, j.completed_at, j.created_at, j.updated_at,
+                  CASE
+                    WHEN j.status = 'pending_assignment' THEN 'unassigned'
+                    WHEN j.status NOT IN ('completed','cancelled') AND j.scheduled_at < now() THEN 'overdue'
+                    ELSE 'on_track'
+                  END AS sla_state,
+                  CASE WHEN j.scheduled_at < now() AND j.status NOT IN ('completed','cancelled')
+                    THEN FLOOR(EXTRACT(EPOCH FROM (now() - j.scheduled_at)) / 60)::integer ELSE 0 END AS minutes_late,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM service_jobs j
+           JOIN orders o ON o.id = j.order_id
+           JOIN customers c ON c.id = j.customer_id
+           LEFT JOIN users u ON u.id = c.user_id
+           LEFT JOIN service_locations l ON l.id = j.service_location_id
+           WHERE ($1 = '' OR c.name ILIKE '%' || $1 || '%' OR u.mobile LIKE '%' || $1 || '%'
+                  OR o.external_order_id ILIKE '%' || $1 || '%' OR l.address_text ILIKE '%' || $1 || '%')
+             AND CASE $2
+               WHEN 'open' THEN j.status NOT IN ('completed','cancelled')
+               WHEN 'pending_assignment' THEN j.status = 'pending_assignment'
+               WHEN 'scheduled' THEN j.status = 'scheduled'
+               WHEN 'active' THEN j.status IN ('en_route','arrived','in_progress')
+               WHEN 'completed' THEN j.status = 'completed'
+               WHEN 'cancelled' THEN j.status = 'cancelled'
+               WHEN 'overdue' THEN j.status NOT IN ('completed','cancelled','pending_assignment') AND j.scheduled_at < now()
+               ELSE true
+             END
+           ORDER BY
+             CASE WHEN j.status = 'pending_assignment' THEN 0 WHEN j.status NOT IN ('completed','cancelled') AND j.scheduled_at < now() THEN 1 ELSE 2 END,
+             COALESCE(j.scheduled_at, j.created_at) ASC, j.id ASC
+           LIMIT $3 OFFSET $4`,
+          [query.trim(), status, limit, offset]
+        );
+        return rows;
+      },
       async findById(id) {
         const { rows } = await db.query('SELECT * FROM service_jobs WHERE id = $1 LIMIT 1', [id]);
         return rows[0] || null;
