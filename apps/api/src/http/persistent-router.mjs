@@ -55,7 +55,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       pagination: { ...pagination, total: rows[0]?.total_count || 0 }
     });
   }
-  const collectionMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/(addresses|assets|orders)$/);
+  const collectionMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/(addresses|assets|orders|jobs)$/);
   if (method === 'GET' && collectionMatch) {
     if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
     const pagination = parsePagination(context);
@@ -67,7 +67,8 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const loaders = {
       addresses: repos.customers.listAddresses,
       assets: repos.customers.listAssets,
-      orders: repos.customers.listOrders
+      orders: repos.customers.listOrders,
+      jobs: repos.customers.listServiceJobs
     };
     const rows = await loaders[key](collectionMatch[1], pagination);
     return response(200, {
