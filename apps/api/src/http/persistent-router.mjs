@@ -43,13 +43,17 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
   const timelineMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/timeline$/);
   if (method === 'GET' && timelineMatch) {
     if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
-    const limit = context.limit === undefined ? 50 : Number(context.limit);
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return response(400, { error: 'invalid_pagination' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
     const repos = createRepositories(db);
     const customer = await repos.customers.findDetails(timelineMatch[1]);
     if (!customer) return response(404, { error: 'customer_not_found' });
-    const timeline = await repos.customers.timeline(timelineMatch[1], limit);
-    return response(200, { customerId: timelineMatch[1], timeline });
+    const rows = await repos.customers.timeline(timelineMatch[1], pagination);
+    return response(200, {
+      customerId: timelineMatch[1],
+      timeline: rows.map(({ total_count, ...item }) => item),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 }
+    });
   }
   const collectionMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/(addresses|assets|orders)$/);
   if (method === 'GET' && collectionMatch) {
