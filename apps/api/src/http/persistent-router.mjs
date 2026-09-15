@@ -81,6 +81,26 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const address = await createRepositories(db).customers.addAddress(addressMatch[1], { cityId, addressText });
     return address ? response(201, { address }) : response(404, { error: 'customer_not_found' });
   }
+  const assetMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/assets$/);
+  if (method === 'POST' && assetMatch) {
+    if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
+    const productId = cleanOptional(body.productId);
+    const serialNumber = cleanOptional(body.serialNumber) || null;
+    const installedAt = parseDate(body.installedAt);
+    const warrantyEndsAt = body.warrantyEndsAt ? parseDate(body.warrantyEndsAt) : null;
+    const maintenanceIntervalMonths = Number(body.maintenanceIntervalMonths ?? 6);
+    if (productId.length < 2 || productId.length > 200 || (serialNumber && serialNumber.length > 100) ||
+        !installedAt || (body.warrantyEndsAt && !warrantyEndsAt) ||
+        !Number.isInteger(maintenanceIntervalMonths) || maintenanceIntervalMonths < 1 || maintenanceIntervalMonths > 120 ||
+        (warrantyEndsAt && warrantyEndsAt < installedAt)) {
+      return response(400, { error: 'invalid_asset' });
+    }
+    const asset = await createRepositories(db).customers.addAsset(assetMatch[1], {
+      productId, serialNumber, installedAt, warrantyEndsAt, maintenanceIntervalMonths,
+      nextMaintenanceAt: addUtcMonths(installedAt, maintenanceIntervalMonths)
+    });
+    return asset ? response(201, { asset }) : response(404, { error: 'customer_not_found' });
+  }
   if (method === 'PATCH' && customerMatch) {
     if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
     const hasName = Object.hasOwn(body, 'name');
@@ -237,6 +257,22 @@ function normalizeSaudiMobile(value) {
 }
 
 function cleanOptional(value) { return typeof value === 'string' ? value.trim().slice(0, 500) : ''; }
+
+function parseDate(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function addUtcMonths(iso, months) {
+  const date = new Date(iso);
+  const day = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay));
+  return date.toISOString();
+}
 
 async function resolveTechnician({ role, context, db }) {
   if (!can(role, 'jobs:assigned:read') || role !== 'technician') {
