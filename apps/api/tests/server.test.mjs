@@ -113,6 +113,16 @@ test('live HTTP customer stats returns authorized CRM totals', async (t) => {
   assert.deepEqual((await response.json()).stats,{total:42,new_this_month:7,with_orders:31});
 });
 
+test('live HTTP customer timeline includes maintenance and pagination',async(t)=>{
+  const db={query:async(sql,params)=>{if(/SELECT c\.id, c\.name/.test(sql))return{rows:[{id:'customer-1',name:'عميل'}]};assert.match(sql,/asset_maintenance_events/);assert.deepEqual(params,['customer-1',10,20]);return{rows:[{id:'maintenance-1',type:'maintenance',status:'completed',total_count:24}]};}};
+  const server=createApiServer({db:withSession(db,{role:'support'})});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();
+  const response=await fetch(`http://127.0.0.1:${port}/api/v1/customers/customer-1/timeline?limit=10&offset=20`,{headers:authHeaders});
+  const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.timeline[0].type,'maintenance');assert.deepEqual(payload.pagination,{limit:10,offset:20,total:24});
+});
+
 for(const collection of ['addresses','assets','orders']){
   test(`live HTTP customer ${collection} route is authenticated and paginated`,async(t)=>{
     const db={query:async(sql,params)=>{
