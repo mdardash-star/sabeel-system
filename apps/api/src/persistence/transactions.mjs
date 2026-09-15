@@ -17,6 +17,32 @@ export async function withTransaction(db, work) {
   }
 }
 
+export async function setTechnicianActive(db, { technicianId, isActive, reason = '', actorUserId }) {
+  return withTransaction(db, async (client) => {
+    const locked = await client.query(
+      `SELECT t.id, t.user_id, t.is_active, u.is_active AS user_is_active
+       FROM technicians t JOIN users u ON u.id = t.user_id
+       WHERE t.id = $1 FOR UPDATE OF t`,
+      [technicianId]
+    );
+    const current = locked.rows[0];
+    if (!current) return null;
+    if (current.is_active === isActive) throw new Error('Technician status is unchanged');
+
+    const updated = await client.query(
+      `UPDATE technicians SET is_active = $2 WHERE id = $1
+       RETURNING id, user_id, city_id, branch_id, compensation_policy_id, is_active, created_at`,
+      [technicianId, isActive]
+    );
+    await client.query(
+      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, 'technician.status_changed', 'technician', $2, $3::jsonb)`,
+      [actorUserId, technicianId, JSON.stringify({ from: current.is_active, to: isActive, reason: reason.trim() })]
+    );
+    return updated.rows[0];
+  });
+}
+
 export async function transitionTechnicianJob(db, { jobId, technicianId, actorUserId, toStatus }) {
   if (toStatus === 'completed') throw new Error('Completion requires evidence endpoint');
 
