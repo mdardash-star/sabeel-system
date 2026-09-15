@@ -136,6 +136,53 @@ export async function completeTechnicianJob(db, { jobId, technicianId, actorUser
   });
 }
 
+export async function completeAssetMaintenance(db, { customerId, assetId, actorUserId, completedAt, notes = '' }) {
+  return withTransaction(db, async (client) => {
+    const locked = await client.query(
+      `SELECT id, customer_id, status, maintenance_interval_months
+       FROM installed_assets
+       WHERE id = $1 AND customer_id = $2
+       FOR UPDATE`,
+      [assetId, customerId]
+    );
+    const current = locked.rows[0];
+    if (!current) return null;
+    if (current.status !== 'active') throw new Error('Asset is not active');
+
+    const nextMaintenanceAt = addUtcMonths(completedAt, Number(current.maintenance_interval_months || 6));
+    const updated = await client.query(
+      `UPDATE installed_assets
+       SET last_maintenance_at = $3, next_maintenance_at = $4
+       WHERE id = $1 AND customer_id = $2
+       RETURNING id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
+                 maintenance_interval_months, last_maintenance_at, next_maintenance_at, status`,
+      [assetId, customerId, completedAt, nextMaintenanceAt]
+    );
+    const event = await client.query(
+      `INSERT INTO asset_maintenance_events (asset_id, completed_at, notes, performed_by)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, asset_id, completed_at, notes, performed_by, created_at`,
+      [assetId, completedAt, notes, actorUserId]
+    );
+    await client.query(
+      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, 'asset.maintenance_completed', 'installed_asset', $2, $3::jsonb)`,
+      [actorUserId, assetId, JSON.stringify({ customerId, completedAt, nextMaintenanceAt })]
+    );
+    return { asset: updated.rows[0], maintenance: event.rows[0] };
+  });
+}
+
+function addUtcMonths(iso, months) {
+  const date = new Date(iso);
+  const day = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay));
+  return date.toISOString();
+}
+
 function validateEvidence(jobId, evidence) {
   if (!Array.isArray(evidence) || evidence.length === 0) throw new Error('Evidence is required before completion');
   if (evidence.length > 10) throw new Error('Too many evidence items');
