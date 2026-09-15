@@ -34,6 +34,23 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
   }
 
   const customerMatch = url.match(/^\/api\/v1\/customers\/([^/]+)$/);
+  if (method === 'PATCH' && customerMatch) {
+    if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
+    const hasName = Object.hasOwn(body, 'name');
+    const hasMobile = Object.hasOwn(body, 'mobile');
+    const name = hasName && typeof body.name === 'string' ? body.name.trim() : null;
+    const mobile = hasMobile ? normalizeSaudiMobile(body.mobile) : null;
+    if ((!hasName && !hasMobile) || (hasName && (!name || name.length < 2)) || (hasMobile && !mobile)) {
+      return response(400, { error: 'invalid_customer_update' });
+    }
+    try {
+      const customer = await createRepositories(db).customers.update(customerMatch[1], { name, mobile });
+      return customer ? response(200, { customer }) : response(404, { error: 'customer_not_found' });
+    } catch (error) {
+      if (error.message === 'Customer mobile already exists') return response(409, { error: 'mobile_already_exists' });
+      throw error;
+    }
+  }
   if (method === 'GET' && customerMatch) {
     if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
     const customer = await createRepositories(db).customers.findDetails(customerMatch[1]);
