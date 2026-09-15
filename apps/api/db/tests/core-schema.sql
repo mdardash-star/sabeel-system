@@ -17,6 +17,9 @@ VALUES ('20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000
 INSERT INTO orders (id, external_source, external_order_id, customer_id, paid_at, total_ex_vat)
 VALUES ('30000000-0000-0000-0000-000000000001', 'woocommerce', '9001', '10000000-0000-0000-0000-000000000001', now(), 500);
 
+INSERT INTO order_costs (order_id, product_cost, other_costs)
+VALUES ('30000000-0000-0000-0000-000000000001', 250, 50);
+
 INSERT INTO service_jobs (id, order_id, customer_id, city_id, technician_id, status, scheduled_at)
 VALUES ('40000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'riyadh', '20000000-0000-0000-0000-000000000001', 'in_progress', now());
 
@@ -50,6 +53,12 @@ BEGIN
   END IF;
   IF (SELECT score FROM service_ratings WHERE job_id='40000000-0000-0000-0000-000000000001') <> 5 THEN
     RAISE EXCEPTION 'rating mismatch';
+  END IF;
+  IF (SELECT commission_rate FROM compensation_policies WHERE id='initial-margin-30') <> 0.3000 THEN
+    RAISE EXCEPTION 'default compensation policy missing';
+  END IF;
+  IF (SELECT product_cost FROM order_costs WHERE order_id='30000000-0000-0000-0000-000000000001') <> 250 THEN
+    RAISE EXCEPTION 'order costs missing';
   END IF;
 END $$;
 

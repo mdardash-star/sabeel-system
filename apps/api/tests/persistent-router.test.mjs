@@ -154,3 +154,44 @@ test('technician completion must use evidence endpoint', async () => {
   assert.equal(result.status, 409);
   assert.equal(result.data.error, 'completion_endpoint_required');
 });
+
+test('technician completes an owned job using server-side finance data', async () => {
+  const client = {
+    query: async (sql, params) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+      if (/FROM service_jobs j/.test(sql)) return { rows: [{
+        id: 'job-1', technician_id: 'tech-1', status: 'in_progress', total_ex_vat: '650.00',
+        product_cost: '350.00', other_costs: '0.00', mode: 'percentage',
+        commission_rate: '0.3000', policy_version: 'initial-1'
+      }] };
+      if (/INSERT INTO job_evidence/.test(sql)) return { rows: [{ id: 'e1', job_id: 'job-1', media_type: params[1], storage_key: params[2] }] };
+      if (/UPDATE service_jobs/.test(sql)) return { rows: [{ id: 'job-1', status: 'completed' }] };
+      if (/INSERT INTO technician_settlements/.test(sql)) return { rows: [{ id: 's1', payout_amount: '90.00', status: 'pending_approval' }] };
+      if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
+      throw new Error('Unexpected query');
+    },
+    release() {}
+  };
+  const db = {
+    query: async () => ({ rows: [{ id: 'tech-1', user_id: 'user-1' }] }),
+    connect: async () => client
+  };
+  const result = await routePersistentRequest({
+    method: 'POST', url: '/api/v1/technicians/me/jobs/job-1/complete', role: 'technician',
+    body: { evidence: [{ mediaType: 'image', storageKey: 'jobs/job-1/after.jpg' }], commissionRate: 0.5 },
+    context: { userId: 'user-1' }, db
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.job.status, 'completed');
+  assert.equal(result.data.settlement.payout_amount, '90.00');
+});
+
+test('technician completion rejects missing evidence before database transaction', async () => {
+  const result = await routePersistentRequest({
+    method: 'POST', url: '/api/v1/technicians/me/jobs/job-1/complete', role: 'technician', body: {},
+    context: { userId: 'user-1' },
+    db: { query: async () => ({ rows: [{ id: 'tech-1', user_id: 'user-1' }] }), connect: async () => { throw new Error('must not connect'); } }
+  });
+  assert.equal(result.status, 422);
+  assert.equal(result.data.error, 'evidence_required');
+});
