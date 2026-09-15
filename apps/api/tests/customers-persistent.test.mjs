@@ -76,3 +76,13 @@ test('support reads an ordered customer timeline', async () => {
   assert.equal(result.status,200);
   assert.equal(result.data.timeline[0].type,'order');
 });
+
+for (const collection of ['addresses','assets']) {
+  test(`support reads paginated customer ${collection}`, async () => {
+    const db={query:async(sql,params)=>{if(/SELECT c\.id/.test(sql))return{rows:[{id:'c1'}]};assert.match(sql,collection==='addresses'?/FROM service_locations/:/FROM installed_assets/);assert.deepEqual(params,['c1',5,10]);return{rows:[{id:`${collection}-1`,total_count:12}]};}};
+    const result=await routePersistentRequest({method:'GET',url:`/api/v1/customers/c1/${collection}`,role:'branch_manager',context:{limit:'5',offset:'10'},db});
+    assert.equal(result.status,200);
+    assert.equal(result.data[collection][0].id,`${collection}-1`);
+    assert.deepEqual(result.data.pagination,{limit:5,offset:10,total:12});
+  });
+}
