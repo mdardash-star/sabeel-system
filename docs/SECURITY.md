@@ -10,6 +10,8 @@
 - Request and verification rate limits are mandatory.
 - Admin accounts require stronger authentication than customer OTP.
 - Sessions can be revoked.
+- Persistent API routes accept a Bearer session token only. Raw tokens are never stored; PostgreSQL stores a SHA-256 hash and rejects expired, revoked, or inactive-user sessions.
+- Client-supplied role and user ID headers are ignored by persistent technician and finance routes.
 
 ## Authorization
 - Deny by default.

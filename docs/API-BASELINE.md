@@ -2,6 +2,8 @@
 
 Base prefix: `/api/v1`
 
+Persistent application routes require `Authorization: Bearer <session-token>`. The server resolves user ID and role from the hashed, active PostgreSQL session; client-supplied identity headers are not trusted.
+
 ## Identity
 - POST `/auth/otp/request`
 - POST `/auth/otp/verify`

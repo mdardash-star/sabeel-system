@@ -3,14 +3,22 @@ import { pathToFileURL } from 'node:url';
 import { routeRequest } from './http/router.mjs';
 import { routePersistentRequest } from './http/persistent-router.mjs';
 import { createDatabase } from './persistence/database.mjs';
+import { authenticateBearer } from './auth/session-auth.mjs';
 
 export function createRequestHandler({ db = null } = {}) {
   return async function handleRequest(req, res) {
     try {
       const requestUrl = new URL(req.url, 'http://subil.local');
       const body = await readJson(req);
-      const role = req.headers['x-subil-role'] || 'anonymous';
-      const userId = req.headers['x-subil-user-id'] || null;
+      const persistent = isPersistentRoute(req.method, requestUrl.pathname);
+      let role = req.headers['x-subil-role'] || 'anonymous';
+      let userId = req.headers['x-subil-user-id'] || null;
+      if (persistent) {
+        const session = await authenticateBearer(db, req.headers.authorization);
+        if (!session) return sendJson(res, 401, { error: 'invalid_or_expired_session' });
+        role = session.role;
+        userId = session.user_id;
+      }
       const context = {
         userId,
         from: requestUrl.searchParams.get('from') || undefined,
@@ -20,7 +28,7 @@ export function createRequestHandler({ db = null } = {}) {
         jobs: []
       };
 
-      const result = isPersistentRoute(req.method, requestUrl.pathname)
+      const result = persistent
         ? await routePersistentRequest({ method: req.method, url: requestUrl.pathname, role, body, context, db })
         : routeRequest({ method: req.method, url: requestUrl.pathname, role, body, context });
 
