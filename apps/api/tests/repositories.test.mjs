@@ -12,11 +12,16 @@ test('technician repository resolves only active profiles from active users', as
     assert.match(sql, /JOIN users u/);
     assert.match(sql, /t\.is_active = true/);
     assert.match(sql, /u\.is_active = true/);
-    assert.deepEqual(params, ['user-1']);
+    assert.deepEqual(params, ['user-1', null]);
     return { rows: [{ id: 'tech-1', user_id: 'user-1' }] };
   }));
   const technician = await repos.technicians.findActiveByUserId('user-1');
   assert.equal(technician.id, 'tech-1');
+});
+
+test('technician profile lookup is constrained to authenticated tenant',async()=>{
+  const repos=createRepositories(fakeDb((sql,params)=>{assert.match(sql,/u\.organization_id = \$2/);assert.deepEqual(params,['user-1','00000000-0000-4000-8000-000000000001']);return{rows:[]}}));
+  assert.equal(await repos.technicians.findActiveByUserId('user-1','00000000-0000-4000-8000-000000000001'),null);
 });
 
 test('customer repository resolves external identity with parameters', async () => {
