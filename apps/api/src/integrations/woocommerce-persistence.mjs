@@ -78,15 +78,19 @@ export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh', or
     );
 
     const job = (await client.query(
-      `INSERT INTO service_jobs (order_id, customer_id, service_location_id, city_id, status, organization_id)
-       VALUES ($1, $2, $3, $4, 'pending_assignment', $5) RETURNING *`,
-      [persistedOrder.id, customer.id, serviceLocation.id, cityId, organizationId]
+      `INSERT INTO service_jobs
+         (order_id, customer_id, service_location_id, city_id, status, organization_id, required_skill_code, service_duration_minutes)
+       VALUES ($1, $2, $3, $4, 'pending_assignment', $5, $6, $7) RETURNING *`,
+      [persistedOrder.id, customer.id, serviceLocation.id, cityId, organizationId, mapped.requiredSkillCode, mapped.serviceDurationMinutes]
     )).rows[0];
 
     await client.query(
       `INSERT INTO audit_log (action, entity_type, entity_id, data)
        VALUES ('woocommerce.service_job_created', 'service_job', $1, $2::jsonb)`,
-      [job.id, JSON.stringify({ externalOrderId: String(order.id), identityKey: identity.identityKey, organizationId, productCost })]
+      [job.id, JSON.stringify({
+        externalOrderId: String(order.id), identityKey: identity.identityKey, organizationId,
+        productCost, requiredSkillCode: mapped.requiredSkillCode, serviceDurationMinutes: mapped.serviceDurationMinutes
+      })]
     );
 
     return { serviceRequired: true, duplicate: false, customer, order: persistedOrder, job, productCost };
