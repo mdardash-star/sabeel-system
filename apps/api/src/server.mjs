@@ -19,6 +19,15 @@ export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } 
         res.writeHead(204); return res.end();
       }
       const requestUrl = new URL(req.url, 'http://subil.local');
+      if (req.method === 'GET' && requestUrl.pathname === '/ready') {
+        if (!db) return sendJson(res, 503, { service: 'subil-api', status: 'not_ready', database: 'missing' });
+        try {
+          await db.query('SELECT 1 AS ok');
+          return sendJson(res, 200, { service: 'subil-api', status: 'ready', database: 'ok' });
+        } catch {
+          return sendJson(res, 503, { service: 'subil-api', status: 'not_ready', database: 'unavailable' });
+        }
+      }
       const body = await readJson(req);
       const authRoute = isAuthRoute(req.method, requestUrl.pathname);
       if (authRoute) {
