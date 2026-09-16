@@ -142,16 +142,16 @@ export function createRepositories(db) {
         );
         return rows[0] || null;
       },
-      async stats() {
+      async stats(tenantId = null) {
         const { rows } = await db.query(
           `SELECT COUNT(*)::integer AS total,
                   COUNT(*) FILTER (WHERE c.created_at >= date_trunc('month', now()))::integer AS new_this_month,
                   COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id))::integer AS with_orders
-           FROM customers c`
+           FROM customers c WHERE ($1::uuid IS NULL OR c.organization_id=$1)`,[tenantId]
         );
         return rows[0] || { total: 0, new_this_month: 0, with_orders: 0 };
       },
-      async list({ query = '', limit = 20, offset = 0 } = {}) {
+      async list({ query = '', limit = 20, offset = 0, tenantId = null } = {}) {
         const search = query.trim();
         const { rows } = await db.query(
           `SELECT c.id, c.name, u.mobile, location.city_id, location.address_text,
@@ -164,36 +164,39 @@ export function createRepositories(db) {
              WHERE customer_id = c.id ORDER BY created_at DESC LIMIT 1
            ) location ON true
            LEFT JOIN orders o ON o.customer_id = c.id
-           WHERE ($1 = '' OR c.name ILIKE '%' || $1 || '%' OR u.mobile LIKE '%' || $1 || '%')
+           WHERE ($1::uuid IS NULL OR c.organization_id=$1)
+             AND ($2 = '' OR c.name ILIKE '%' || $2 || '%' OR u.mobile LIKE '%' || $2 || '%')
            GROUP BY c.id, u.mobile, location.city_id, location.address_text
-           ORDER BY c.created_at DESC, c.id DESC LIMIT $2 OFFSET $3`,
-          [search, limit, offset]
+           ORDER BY c.created_at DESC, c.id DESC LIMIT $3 OFFSET $4`,
+          [tenantId,search,limit,offset]
         );
         return rows;
       },
-      async findDetails(id) {
+      async findDetails(id, tenantId = null) {
         const { rows } = await db.query(
           `SELECT c.id, c.name, c.created_at, u.mobile,
                   (SELECT COUNT(*)::integer FROM orders o WHERE o.customer_id = c.id) AS order_count,
                   (SELECT COALESCE(SUM(o.total_ex_vat), 0)::numeric FROM orders o WHERE o.customer_id = c.id) AS order_total_ex_vat
-           FROM customers c LEFT JOIN users u ON u.id = c.user_id WHERE c.id = $1 LIMIT 1`,
-          [id]
+           FROM customers c LEFT JOIN users u ON u.id = c.user_id
+           WHERE c.id = $1 AND ($2::uuid IS NULL OR c.organization_id=$2) LIMIT 1`,
+          [id,tenantId]
         );
         return rows[0] || null;
       },
-      async create({ name, mobile, cityId, addressText }) {
+      async create({ name, mobile, cityId, addressText, organizationId = null }) {
         if (!db.connect) throw new Error('Database transaction support is required');
         const client = await db.connect();
         try {
           await client.query('BEGIN');
           const userResult = await client.query(
-            `INSERT INTO users (mobile, role) VALUES ($1, 'customer')
-             ON CONFLICT (mobile) DO NOTHING RETURNING id`, [mobile]
+            `INSERT INTO users (mobile, role, organization_id) VALUES ($1, 'customer',COALESCE($2::uuid,'00000000-0000-4000-8000-000000000001'))
+             ON CONFLICT (mobile) DO NOTHING RETURNING id`, [mobile,organizationId]
           );
           if (!userResult.rows[0]) throw new Error('Customer mobile already exists');
           const customerResult = await client.query(
-            'INSERT INTO customers (user_id, name) VALUES ($1, $2) RETURNING id, name, created_at',
-            [userResult.rows[0].id, name]
+            `INSERT INTO customers (user_id, name, organization_id)
+             VALUES ($1,$2,COALESCE($3::uuid,'00000000-0000-4000-8000-000000000001')) RETURNING id,name,created_at`,
+            [userResult.rows[0].id,name,organizationId]
           );
           const customer = customerResult.rows[0];
           if (cityId || addressText) {
