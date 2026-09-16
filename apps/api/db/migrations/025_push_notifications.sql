@@ -1,0 +1,7 @@
+BEGIN;
+CREATE TABLE push_subscriptions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid NOT NULL REFERENCES users(id)ON DELETE CASCADE,endpoint text NOT NULL,p256dh text NOT NULL,auth_secret text NOT NULL,user_agent text NOT NULL DEFAULT '',is_active boolean NOT NULL DEFAULT true,last_seen_at timestamptz NOT NULL DEFAULT now(),created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),UNIQUE(user_id,endpoint));
+CREATE INDEX push_subscriptions_active_idx ON push_subscriptions(user_id)WHERE is_active;
+CREATE TABLE notification_preferences(user_id uuid PRIMARY KEY REFERENCES users(id)ON DELETE CASCADE,service_updates boolean NOT NULL DEFAULT true,maintenance_reminders boolean NOT NULL DEFAULT true,marketing boolean NOT NULL DEFAULT false,updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE push_deliveries(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),event_id uuid NOT NULL REFERENCES notification_events(id)ON DELETE CASCADE,subscription_id uuid NOT NULL REFERENCES push_subscriptions(id)ON DELETE CASCADE,status text NOT NULL DEFAULT 'pending' CHECK(status IN('pending','processing','sent','failed','cancelled')),attempts integer NOT NULL DEFAULT 0 CHECK(attempts>=0),next_attempt_at timestamptz NOT NULL DEFAULT now(),last_error text,provider_message_id text,sent_at timestamptz,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),UNIQUE(event_id,subscription_id));
+CREATE INDEX push_deliveries_queue_idx ON push_deliveries(status,next_attempt_at);
+COMMIT;
