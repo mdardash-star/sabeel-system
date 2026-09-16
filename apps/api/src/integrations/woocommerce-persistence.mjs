@@ -57,11 +57,25 @@ export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh', or
          FROM (SELECT 1) seed LEFT JOIN inventory_items i ON i.organization_id=$8 AND i.sku = NULLIF($4, '')
          ON CONFLICT (order_id, external_line_item_id) DO UPDATE SET
            product_id = EXCLUDED.product_id, sku = EXCLUDED.sku, product_name = EXCLUDED.product_name,
-           quantity = EXCLUDED.quantity, subtotal_ex_vat = EXCLUDED.subtotal_ex_vat`,
+           quantity = EXCLUDED.quantity, subtotal_ex_vat = EXCLUDED.subtotal_ex_vat,
+           unit_cost_snapshot = EXCLUDED.unit_cost_snapshot`,
         [persistedOrder.id, String(item.id), item.product_id ? String(item.product_id) : null,
           String(item.sku || ''), String(item.name || 'منتج'), Number(item.quantity || 1), subtotalExVat, organizationId]
       );
     }
+
+    const costRow = (await client.query(
+      `SELECT COALESCE(SUM(quantity * unit_cost_snapshot), 0)::numeric(12,2) AS product_cost
+       FROM order_items WHERE order_id=$1`,
+      [persistedOrder.id]
+    )).rows[0];
+    const productCost = Number(costRow?.product_cost || 0);
+    await client.query(
+      `INSERT INTO order_costs (order_id, product_cost, other_costs, updated_at)
+       VALUES ($1,$2,0,now())
+       ON CONFLICT (order_id) DO UPDATE SET product_cost=EXCLUDED.product_cost, updated_at=now()`,
+      [persistedOrder.id, productCost]
+    );
 
     const job = (await client.query(
       `INSERT INTO service_jobs (order_id, customer_id, service_location_id, city_id, status, organization_id)
@@ -72,9 +86,9 @@ export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh', or
     await client.query(
       `INSERT INTO audit_log (action, entity_type, entity_id, data)
        VALUES ('woocommerce.service_job_created', 'service_job', $1, $2::jsonb)`,
-      [job.id, JSON.stringify({ externalOrderId: String(order.id), identityKey: identity.identityKey, organizationId })]
+      [job.id, JSON.stringify({ externalOrderId: String(order.id), identityKey: identity.identityKey, organizationId, productCost })]
     );
 
-    return { serviceRequired: true, duplicate: false, customer, order: persistedOrder, job };
+    return { serviceRequired: true, duplicate: false, customer, order: persistedOrder, job, productCost };
   });
 }
