@@ -11,7 +11,7 @@ test('support reads aggregate customer stats', async () => {
 test('support lists customers with search and pagination', async () => {
   const db = { query: async (sql, params) => {
     assert.match(sql, /FROM customers c/);
-    assert.deepEqual(params, ['نورة', 10, 20]);
+    assert.deepEqual(params, [null,'نورة',10,20]);
     return { rows: [{ id:'c1', name:'نورة', mobile:'+966500000000', total_count:3 }] };
   }};
   const result = await routePersistentRequest({ method:'GET', url:'/api/v1/customers', role:'support', context:{query:'نورة',limit:'10',offset:'20'}, db });
@@ -47,11 +47,27 @@ test('duplicate customer mobile rolls back and returns conflict', async () => {
 });
 
 test('customer details return a lightweight CRM summary to authorized role', async () => {
-  const db={query:async(sql,params)=>{assert.match(sql,/order_total_ex_vat/);assert.doesNotMatch(sql,/json_agg/);assert.deepEqual(params,['c1']);return {rows:[{id:'c1',name:'محمد',order_count:2,order_total_ex_vat:'2070'}]};}};
+  const db={query:async(sql,params)=>{assert.match(sql,/order_total_ex_vat/);assert.doesNotMatch(sql,/json_agg/);assert.deepEqual(params,['c1',null]);return {rows:[{id:'c1',name:'محمد',order_count:2,order_total_ex_vat:'2070'}]};}};
   const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/c1',role:'admin',db});
   assert.equal(result.status,200);
   assert.equal(result.data.customer.id,'c1');
   assert.equal(result.data.customer.order_count,2);
+});
+
+test('customer CRM list and details are tenant constrained',async()=>{
+  const tenantId='00000000-0000-4000-8000-000000000001',calls=[];
+  const db={query:async(sql,params)=>{calls.push({sql,params});return{rows:[]}}};
+  await routePersistentRequest({method:'GET',url:'/api/v1/customers',role:'support',context:{tenantId},db});
+  await routePersistentRequest({method:'GET',url:'/api/v1/customers/cross-tenant',role:'support',context:{tenantId},db});
+  assert.match(calls[0].sql,/c\.organization_id=\$1/);assert.deepEqual(calls[0].params,[tenantId,'',20,0]);
+  assert.match(calls[1].sql,/c\.organization_id=\$2/);assert.deepEqual(calls[1].params,['cross-tenant',tenantId]);
+});
+
+test('new customer inherits authenticated tenant',async()=>{
+  const tenantId='00000000-0000-4000-8000-000000000001',calls=[];
+  const client={query:async(sql,params)=>{calls.push({sql,params});if(/INSERT INTO users/.test(sql))return{rows:[{id:'u1'}]};if(/INSERT INTO customers/.test(sql))return{rows:[{id:'c1',name:'عميل'}]};return{rows:[]}},release(){}};
+  const result=await routePersistentRequest({method:'POST',url:'/api/v1/customers',role:'support',context:{tenantId},body:{name:'عميل جديد',mobile:'0551234567'},db:{query:async()=>({rows:[]}),connect:async()=>client}});
+  assert.equal(result.status,201);assert.deepEqual(calls.find(x=>/INSERT INTO users/.test(x.sql)).params,['+966551234567',tenantId]);assert.deepEqual(calls.find(x=>/INSERT INTO customers/.test(x.sql)).params,['u1','عميل جديد',tenantId]);
 });
 
 test('support updates customer name and mobile atomically', async () => {
