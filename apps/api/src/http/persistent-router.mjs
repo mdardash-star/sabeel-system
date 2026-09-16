@@ -155,7 +155,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
 
   if (method === 'GET' && url === '/api/v1/technicians/stats') {
     if (!can(role, 'technicians:read')) return response(403, { error: 'forbidden' });
-    const stats = await createRepositories(db).technicians.operationsStats();
+    const stats = await createRepositories(db).technicians.operationsStats(context.tenantId||null);
     return response(200, { stats });
   }
 
@@ -166,7 +166,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const status = context.status || 'all';
     if (!['all', 'active', 'inactive'].includes(status)) return response(400, { error: 'invalid_technician_status_filter' });
     const rows = await createRepositories(db).technicians.listForOperations({
-      ...pagination, status, query: context.query || ''
+      ...pagination,status,query:context.query||'',tenantId:context.tenantId||null
     });
     return response(200, {
       technicians: rows.map(({ total_count, ...technician }) => technician),
@@ -440,7 +440,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const range = parseDateRange(context.from, context.to);
     if (!range) return response(400, { error: 'invalid_date_range' });
     const repos = createRepositories(db);
-    const technician = await repos.technicians.performance(technicianPerformanceMatch[1], range.from, range.to);
+    const technician = await repos.technicians.performance(technicianPerformanceMatch[1],range.from,range.to,context.tenantId||null);
     if (!technician) return response(404, { error: 'technician_not_found' });
     const recentJobs = await repos.technicians.recentJobs(technicianPerformanceMatch[1], range.from, range.to, 10);
     return response(200, { technician, recentJobs, range });
@@ -455,7 +455,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     if (!body.isActive && reason.length < 3) return response(400, { error: 'deactivation_reason_required' });
     try {
       const technician = await setTechnicianActive(db, {
-        technicianId: technicianStatusMatch[1], isActive: body.isActive, reason, actorUserId: context.userId
+        technicianId:technicianStatusMatch[1],isActive:body.isActive,reason,actorUserId:context.userId,tenantId:context.tenantId||null
       });
       return technician ? response(200, { technician }) : response(404, { error: 'technician_not_found' });
     } catch (error) {
