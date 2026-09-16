@@ -17,13 +17,13 @@ export async function withTransaction(db, work) {
   }
 }
 
-export async function setTechnicianActive(db, { technicianId, isActive, reason = '', actorUserId }) {
+export async function setTechnicianActive(db, { technicianId, isActive, reason = '', actorUserId, tenantId = null }) {
   return withTransaction(db, async (client) => {
     const locked = await client.query(
       `SELECT t.id, t.user_id, t.is_active, u.is_active AS user_is_active
        FROM technicians t JOIN users u ON u.id = t.user_id
-       WHERE t.id = $1 FOR UPDATE OF t`,
-      [technicianId]
+       WHERE t.id=$1 AND ($2::uuid IS NULL OR u.organization_id=$2) FOR UPDATE OF t`,
+      [technicianId,tenantId]
     );
     const current = locked.rows[0];
     if (!current) return null;
