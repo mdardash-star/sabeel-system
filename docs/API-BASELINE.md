@@ -147,6 +147,9 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - GET `/ai/insights/stats`, `/ai/insights` and `/ai/brief` — prioritized operational exceptions and the latest executive daily brief
 - POST `/ai/insights/run` — idempotent daily scan across overdue jobs, escalations, low stock, settlements, abandoned carts, campaigns and customer conversations
 - PATCH `/ai/insights/:id` — acknowledges, resolves or dismisses an open insight with a mandatory resolution note when resolved
+- GET `/ai/dispatch/queue`, `/ai/dispatch/recommendations` and `/ai/dispatch/stats` — pending assignment jobs and explainable recommendation worklist
+- POST `/ai/jobs/:id/dispatch-recommendation` — ranks only eligible, available and conflict-free technicians using distance, rating and workload
+- POST `/ai/dispatch/:id/approve|reject` — records the dispatcher's decision and selected eligible candidate; it never assigns the job automatically
 
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`
