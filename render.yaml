@@ -6,10 +6,11 @@ databases:
 services:
   - type: web
     name: subil-api
-    runtime: docker
-    dockerfilePath: ./Dockerfile.api
+    runtime: node
+    branch: develop
+    buildCommand: npm ci
+    startCommand: npm run migrate --workspace @subil/api && npm run start --workspace @subil/api
     healthCheckPath: /health
-    preDeployCommand: npm run migrate --workspace @subil/api
     envVars:
       - key: NODE_ENV
         value: production
@@ -49,8 +50,10 @@ services:
 
   - type: web
     name: subil-admin
-    runtime: docker
-    dockerfilePath: ./Dockerfile.admin
+    runtime: node
+    branch: develop
+    buildCommand: npm ci && npm run build --workspace @subil/admin
+    startCommand: npm run start --workspace @subil/admin -- -p $PORT
     envVars:
       - key: NODE_ENV
         value: production
