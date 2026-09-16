@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+.next
+**/.next
+.git
+.github
+*.log
+.env
+.env.*
+coverage
+**/coverage
+.DS_Store
