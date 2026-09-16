@@ -104,7 +104,8 @@ function isAuthRoute(method, pathname) {
 
 function isPersistentRoute(method, pathname) {
   if (method === 'GET') {
-    return pathname === '/api/v1/maintenance/stats' || pathname === '/api/v1/maintenance/assets' ||
+    return ['/api/v1/customers/me','/api/v1/customers/me/orders','/api/v1/customers/me/assets','/api/v1/customers/me/jobs'].includes(pathname) ||
+      pathname === '/api/v1/maintenance/stats' || pathname === '/api/v1/maintenance/assets' ||
       pathname === '/api/v1/jobs/stats' || pathname === '/api/v1/jobs' ||
       pathname === '/api/v1/jobs/escalations/stats' || pathname === '/api/v1/jobs/escalations' ||
       pathname === '/api/v1/technicians/stats' || pathname === '/api/v1/technicians' ||
@@ -132,7 +133,7 @@ function isPersistentRoute(method, pathname) {
       pathname === '/api/v1/technicians/me/wallet';
   }
   if (method === 'POST') {
-    return pathname === '/api/v1/customers' || /^\/api\/v1\/customers\/[^/]+\/(?:addresses|assets)$/.test(pathname) ||
+    return /^\/api\/v1\/customers\/me\/jobs\/[^/]+\/rating$/.test(pathname) || pathname === '/api/v1/customers' || /^\/api\/v1\/customers\/[^/]+\/(?:addresses|assets)$/.test(pathname) ||
       /^\/api\/v1\/jobs\/[^/]+\/(?:assign|reassign)$/.test(pathname) ||
       pathname === '/api/v1/jobs/escalations/run' || /^\/api\/v1\/jobs\/[^/]+\/escalations\/resolve$/.test(pathname) ||
       ['/api/v1/inventory/items','/api/v1/inventory/receive','/api/v1/inventory/transfer','/api/v1/inventory/technician-issue'].includes(pathname) ||
