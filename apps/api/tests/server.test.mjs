@@ -161,19 +161,19 @@ test('live HTTP dispatcher runs idempotent SLA detection',async(t)=>{
 });
 
 test('live HTTP finance worklist forwards status and pagination',async(t)=>{
-  const db={query:async(sql,params)=>{assert.match(sql,/technician_mobile/);assert.deepEqual(params,['سبيل','pending_approval',5,10]);return{rows:[{id:'settlement-1',customer_name:'سبيل',total_count:8}]};}};
+  const db={query:async(sql,params)=>{assert.match(sql,/technician_mobile/);assert.deepEqual(params,['سبيل','pending_approval',5,10,organizationId]);return{rows:[{id:'settlement-1',customer_name:'سبيل',total_count:8}]};}};
   const server=createApiServer({db:withSession(db,{role:'finance'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/settlements?status=pending_approval&q=${encodeURIComponent('سبيل')}&limit=5&offset=10`,{headers:authHeaders});const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.settlements[0].id,'settlement-1');assert.equal(payload.pagination.total,8);
 });
 
 test('live HTTP finance rejects settlement with audited reason',async(t)=>{
-  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/SELECT id, technician_id, payout_amount, status/.test(sql))return{rows:[{id:'s1',technician_id:'t1',payout_amount:'75',status:'pending_approval'}]};if(/UPDATE technician_settlements/.test(sql))return{rows:[{id:'s1',status:'rejected'}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
+  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/SELECT s\.id, s\.technician_id/.test(sql))return{rows:[{id:'s1',technician_id:'t1',payout_amount:'75',status:'pending_approval'}]};if(/UPDATE technician_settlements/.test(sql))return{rows:[{id:'s1',status:'rejected'}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
   const db={query:async()=>({rows:[]}),connect:async()=>client},server=createApiServer({db:withSession(db,{role:'finance',userId:'finance-1'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/settlements/s1/reject`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({reason:'تكلفة ناقصة'})});assert.equal(response.status,200);assert.equal((await response.json()).settlement.status,'rejected');
 });
 
 test('live HTTP finance records settlement payment',async(t)=>{
-  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/SELECT id, technician_id, payout_amount, status/.test(sql))return{rows:[{id:'s1',technician_id:'t1',payout_amount:'75',status:'approved'}]};if(/UPDATE technician_settlements/.test(sql))return{rows:[{id:'s1',status:'paid'}]};if(/UPDATE wallet_entries|INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
+  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/SELECT s\.id, s\.technician_id/.test(sql))return{rows:[{id:'s1',technician_id:'t1',payout_amount:'75',status:'approved'}]};if(/UPDATE technician_settlements/.test(sql))return{rows:[{id:'s1',status:'paid'}]};if(/UPDATE wallet_entries|INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
   const db={query:async()=>({rows:[]}),connect:async()=>client},server=createApiServer({db:withSession(db,{role:'finance',userId:'finance-1'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/settlements/s1/paid`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({paymentReference:'TRX-100'})});assert.equal(response.status,200);assert.equal((await response.json()).settlement.status,'paid');
 });
