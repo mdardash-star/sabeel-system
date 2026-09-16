@@ -106,6 +106,7 @@ function isPersistentRoute(method, pathname) {
       pathname === '/api/v1/jobs/escalations/stats' || pathname === '/api/v1/jobs/escalations' ||
       pathname === '/api/v1/technicians/stats' || pathname === '/api/v1/technicians' ||
       pathname === '/api/v1/settlements/stats' || pathname === '/api/v1/settlements' ||
+      pathname === '/api/v1/reports/profitability' ||
       pathname === '/api/v1/inventory/stats' || pathname === '/api/v1/inventory' || pathname === '/api/v1/inventory/movements' ||
       pathname === '/api/v1/purchasing/stats' || pathname === '/api/v1/purchasing/suppliers' || pathname === '/api/v1/purchasing/orders' ||
       /^\/api\/v1\/technicians\/[^/]+\/inventory$/.test(pathname) ||
