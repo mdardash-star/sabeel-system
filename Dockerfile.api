@@ -6,7 +6,9 @@ COPY apps/api/package.json apps/api/package.json
 COPY apps/admin/package.json apps/admin/package.json
 COPY apps/technician/package.json apps/technician/package.json
 COPY apps/mobile/package.json apps/mobile/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
 RUN npm ci --omit=dev
 COPY apps/api apps/api
+COPY packages/contracts packages/contracts
 EXPOSE 3001
 CMD ["npm","run","start","--workspace","@subil/api"]
