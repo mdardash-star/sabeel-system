@@ -117,6 +117,10 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - GET `/marketing/audience-preview?segmentType=...` — current audience size and ten preview customers
 - GET/POST `/marketing/campaigns` — campaign worklist and draft/scheduled creation
 - POST `/marketing/campaigns/:id/launch` — materializes the current segment into auditable pending notification events without calling an external provider directly
+- GET `/marketing/abandoned-carts` and `/marketing/abandoned-carts/stats` — recovery queue, at-risk value and recovery performance
+- POST `/marketing/abandoned-carts` — idempotently imports or refreshes an open cart
+- POST `/marketing/abandoned-carts/recovery/run` — queues at most two reminders per cart with a 24-hour cooldown
+- POST `/marketing/abandoned-carts/:id/recovered` — closes an active cart as recovered and optionally links its order
 
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`
