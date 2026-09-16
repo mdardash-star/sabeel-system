@@ -554,7 +554,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const pagination = parsePagination(context);
     if (!pagination) return response(400, { error: 'invalid_pagination' });
     const repos = createRepositories(db);
-    const asset = await repos.customers.findAsset(assetHistoryMatch[1], assetHistoryMatch[2]);
+    const asset = await repos.customers.findAsset(assetHistoryMatch[1],assetHistoryMatch[2],context.tenantId||null);
     if (!asset) return response(404, { error: 'asset_not_found' });
     const rows = await repos.customers.listAssetHistory(assetHistoryMatch[1], assetHistoryMatch[2], pagination);
     return response(200, {
@@ -569,7 +569,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const cityId = cleanOptional(body.cityId);
     const addressText = cleanOptional(body.addressText);
     if (!cityId || cityId.length > 100 || addressText.length < 3) return response(400, { error: 'invalid_address' });
-    const address = await createRepositories(db).customers.addAddress(addressMatch[1], { cityId, addressText });
+    const address = await createRepositories(db).customers.addAddress(addressMatch[1],{cityId,addressText},context.tenantId||null);
     return address ? response(201, { address }) : response(404, { error: 'customer_not_found' });
   }
   const assetMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/assets$/);
@@ -589,7 +589,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const asset = await createRepositories(db).customers.addAsset(assetMatch[1], {
       productId, serialNumber, installedAt, warrantyEndsAt, maintenanceIntervalMonths,
       nextMaintenanceAt: addUtcMonths(installedAt, maintenanceIntervalMonths)
-    });
+    },context.tenantId||null);
     return asset ? response(201, { asset }) : response(404, { error: 'customer_not_found' });
   }
   const maintenanceMatch = url.match(/^\/api\/v1\/customers\/([^/]+)\/assets\/([^/]+)\/maintenance$/);
@@ -599,6 +599,8 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const completedAt = parseDate(body.completedAt);
     const notes = cleanOptional(body.notes);
     if (!completedAt || notes.length > 500) return response(400, { error: 'invalid_maintenance' });
+    const ownedAsset=await createRepositories(db).customers.findAsset(maintenanceMatch[1],maintenanceMatch[2],context.tenantId||null);
+    if(!ownedAsset)return response(404,{error:'asset_not_found'});
     try {
       const result = await completeAssetMaintenance(db, {
         customerId: maintenanceMatch[1], assetId: maintenanceMatch[2],
@@ -615,6 +617,8 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     if (!can(role, 'customers:update')) return response(403, { error: 'forbidden' });
     if (!context.userId) return response(401, { error: 'user_identity_required' });
     if (!['active', 'inactive'].includes(body.status)) return response(400, { error: 'invalid_asset_status' });
+    const ownedAsset=await createRepositories(db).customers.findAsset(assetStatusMatch[1],assetStatusMatch[2],context.tenantId||null);
+    if(!ownedAsset)return response(404,{error:'asset_not_found'});
     try {
       const asset = await updateAssetStatus(db, {
         customerId: assetStatusMatch[1], assetId: assetStatusMatch[2], actorUserId: context.userId, status: body.status
@@ -635,7 +639,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       return response(400, { error: 'invalid_customer_update' });
     }
     try {
-      const customer = await createRepositories(db).customers.update(customerMatch[1], { name, mobile });
+      const customer = await createRepositories(db).customers.update(customerMatch[1],{name,mobile},context.tenantId||null);
       return customer ? response(200, { customer }) : response(404, { error: 'customer_not_found' });
     } catch (error) {
       if (error.message === 'Customer mobile already exists') return response(409, { error: 'mobile_already_exists' });
