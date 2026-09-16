@@ -4,6 +4,7 @@ import { createApiServer } from '../src/server.mjs';
 
 const sessionToken = 'subil-test-session-token-00000001';
 const authHeaders = { authorization: `Bearer ${sessionToken}` };
+const organizationId = '00000000-0000-4000-8000-000000000001';
 
 test('CORS preflight allows only configured admin origins', async (t) => {
   const server = createApiServer({ db:null, corsOrigins:['https://admin.subil.store'] });
@@ -22,7 +23,7 @@ function withSession(db, { userId = 'user-1', role = 'technician' } = {}) {
   return {
     ...db,
     query: async (sql, params) => {
-      if (/FROM auth_sessions s/.test(sql)) return { rows: [{ user_id: userId, role }] };
+      if (/FROM auth_sessions s/.test(sql)) return { rows: [{ user_id: userId, role, organization_id: organizationId }] };
       return db.query(sql, params);
     }
   };
