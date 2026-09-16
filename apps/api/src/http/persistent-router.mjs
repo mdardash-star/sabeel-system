@@ -37,7 +37,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
 
   if (method === 'GET' && url === '/api/v1/customers/stats') {
     if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
-    const stats = await createRepositories(db).customers.stats();
+    const stats = await createRepositories(db).customers.stats(context.tenantId||null);
     return response(200, { stats });
   }
 
@@ -46,7 +46,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const pagination = parsePagination(context);
     if (!pagination) return response(400, { error: 'invalid_pagination' });
     const repos = createRepositories(db);
-    const rows = await repos.customers.list({ ...pagination, query: context.query || '' });
+    const rows = await repos.customers.list({ ...pagination, query: context.query || '',tenantId:context.tenantId||null });
     return response(200, {
       customers: rows.map(({ total_count, ...customer }) => customer),
       pagination: { ...pagination, total: rows[0]?.total_count || 0 }
@@ -60,7 +60,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     if (name.length < 2 || !mobile) return response(400, { error: 'invalid_customer' });
     try {
       const customer = await createRepositories(db).customers.create({
-        name, mobile, cityId: cleanOptional(body.cityId), addressText: cleanOptional(body.addressText)
+        name,mobile,cityId:cleanOptional(body.cityId),addressText:cleanOptional(body.addressText),organizationId:context.tenantId||null
       });
       return response(201, { customer });
     } catch (error) {
@@ -517,7 +517,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const pagination = parsePagination(context);
     if (!pagination) return response(400, { error: 'invalid_pagination' });
     const repos = createRepositories(db);
-    const customer = await repos.customers.findDetails(timelineMatch[1]);
+    const customer = await repos.customers.findDetails(timelineMatch[1],context.tenantId||null);
     if (!customer) return response(404, { error: 'customer_not_found' });
     const rows = await repos.customers.timeline(timelineMatch[1], pagination);
     return response(200, {
@@ -532,7 +532,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const pagination = parsePagination(context);
     if (!pagination) return response(400, { error: 'invalid_pagination' });
     const repos = createRepositories(db);
-    const customer = await repos.customers.findDetails(collectionMatch[1]);
+    const customer = await repos.customers.findDetails(collectionMatch[1],context.tenantId||null);
     if (!customer) return response(404, { error: 'customer_not_found' });
     const key = collectionMatch[2];
     const loaders = {
@@ -644,7 +644,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
   }
   if (method === 'GET' && customerMatch) {
     if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
-    const customer = await createRepositories(db).customers.findDetails(customerMatch[1]);
+    const customer = await createRepositories(db).customers.findDetails(customerMatch[1],context.tenantId||null);
     return customer ? response(200, { customer }) : response(404, { error: 'customer_not_found' });
   }
 
