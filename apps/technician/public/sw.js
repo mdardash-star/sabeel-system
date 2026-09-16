@@ -11,3 +11,5 @@ self.addEventListener("fetch", event => {
     return response;
   }).catch(() => caches.match(event.request).then(response => response || caches.match("/"))));
 });
+self.addEventListener("push",event=>{const data=event.data?event.data.json():{};event.waitUntil(self.registration.showNotification(data.title||"سبيل للفنيين",{body:data.body||"لديك تحديث في المهام",icon:"/icon.svg",badge:"/icon.svg",data:{url:data.url||"/"}}))});
+self.addEventListener("notificationclick",event=>{event.notification.close();event.waitUntil(clients.openWindow(event.notification.data?.url||"/"))});
