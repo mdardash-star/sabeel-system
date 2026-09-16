@@ -14,11 +14,23 @@ function stripOuterTransaction(sql) {
     .trim();
 }
 
+function connectionForExplicitSsl(connectionString, sslEnabled) {
+  if (!sslEnabled) return connectionString;
+  try {
+    const url = new URL(connectionString);
+    url.searchParams.delete('sslmode');
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
+}
+
 export async function migrate({ connectionString = process.env.DATABASE_URL } = {}) {
   if (!connectionString) throw new Error('DATABASE_URL is required');
+  const sslEnabled = ['true', 'require', 'required'].includes(String(process.env.DATABASE_SSL || '').trim().toLowerCase());
   const pool = new Pool({
-    connectionString,
-    ssl: String(process.env.DATABASE_SSL || '').toLowerCase() === 'true' ? { rejectUnauthorized: false } : undefined,
+    connectionString: connectionForExplicitSsl(connectionString, sslEnabled),
+    ssl: sslEnabled ? { rejectUnauthorized: false } : undefined,
     max: 1
   });
   const client = await pool.connect();
