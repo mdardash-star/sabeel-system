@@ -150,6 +150,9 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - GET `/ai/dispatch/queue`, `/ai/dispatch/recommendations` and `/ai/dispatch/stats` — pending assignment jobs and explainable recommendation worklist
 - POST `/ai/jobs/:id/dispatch-recommendation` — ranks only eligible, available and conflict-free technicians using distance, rating and workload
 - POST `/ai/dispatch/:id/approve|reject` — records the dispatcher's decision and selected eligible candidate; it never assigns the job automatically
+- GET `/ai/sales/stats` and `/ai/sales/opportunities` — scored sales pipeline across maintenance, abandoned carts, cross-sell, win-back and conversation follow-up
+- POST `/ai/sales/scan` — idempotently evaluates CRM, commerce, asset and conversation signals without contacting customers
+- PATCH `/ai/sales/opportunities/:id` — controlled approval, contact and outcome workflow with audited transitions
 
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`
