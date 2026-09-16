@@ -1,8 +1,3 @@
-databases:
-  - name: subil-postgres
-    databaseName: subil
-    user: subil
-
 services:
   - type: web
     name: subil-api
@@ -10,14 +5,12 @@ services:
     branch: develop
     buildCommand: npm ci --include=dev
     startCommand: npm run migrate --workspace @subil/api && npm run start --workspace @subil/api
-    healthCheckPath: /health
+    healthCheckPath: /ready
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        fromDatabase:
-          name: subil-postgres
-          property: connectionString
+        sync: false
       - key: DATABASE_SSL
         value: "true"
       - key: DATABASE_POOL_MAX
@@ -33,10 +26,7 @@ services:
       - key: OTP_SENDER_API_KEY
         sync: false
       - key: SUBIL_ADMIN_ORIGINS
-        fromService:
-          type: web
-          name: subil-admin
-          envVarKey: RENDER_EXTERNAL_URL
+        value: "https://subil-admin.onrender.com,https://subil-technician.onrender.com,https://subil-mobile.onrender.com"
       - key: PUSH_PROVIDER_URL
         sync: false
       - key: PUSH_PROVIDER_API_KEY
@@ -58,7 +48,28 @@ services:
       - key: NODE_ENV
         value: production
       - key: NEXT_PUBLIC_SUBIL_API_URL
-        fromService:
-          type: web
-          name: subil-api
-          envVarKey: RENDER_EXTERNAL_URL
+        value: "https://subil-api.onrender.com"
+
+  - type: web
+    name: subil-technician
+    runtime: node
+    branch: develop
+    buildCommand: npm ci --include=dev && npm run build --workspace @subil/technician
+    startCommand: npm run start --workspace @subil/technician -- -p $PORT
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SUBIL_API_URL
+        value: "https://subil-api.onrender.com"
+
+  - type: web
+    name: subil-mobile
+    runtime: node
+    branch: develop
+    buildCommand: npm ci --include=dev && npm run build --workspace @subil/mobile
+    startCommand: npm run start --workspace @subil/mobile -- -p $PORT
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SUBIL_API_URL
+        value: "https://subil-api.onrender.com"
