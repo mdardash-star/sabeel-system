@@ -99,6 +99,7 @@
     {"method": "POST", "path": "/purchasing/orders/:id/receive", "module": "purchasing", "audit": true},
     {"method": "POST", "path": "/integrations/woocommerce/orders", "module": "commerce_bridge", "idempotent": true},
     {"method": "GET", "path": "/notifications/me", "module": "notifications"},
+    {"method": "GET", "path": "/notifications/config", "module": "notifications"},
     {"method": "PATCH", "path": "/notifications/me", "module": "notifications"},
     {"method": "POST", "path": "/notifications/subscriptions", "module": "notifications"},
     {"method": "POST", "path": "/notifications/subscriptions/disable", "module": "notifications"},
