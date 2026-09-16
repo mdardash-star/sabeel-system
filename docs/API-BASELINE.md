@@ -153,6 +153,9 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - GET `/ai/sales/stats` and `/ai/sales/opportunities` — scored sales pipeline across maintenance, abandoned carts, cross-sell, win-back and conversation follow-up
 - POST `/ai/sales/scan` — idempotently evaluates CRM, commerce, asset and conversation signals without contacting customers
 - PATCH `/ai/sales/opportunities/:id` — controlled approval, contact and outcome workflow with audited transitions
+- GET `/ai/marketing/stats` and `/ai/marketing/recommendations` — prioritized campaign, content, delivery, attribution and budget actions
+- POST `/ai/marketing/scan` — idempotent analysis of 30-day performance signals; it does not create or launch campaigns automatically
+- PATCH `/ai/marketing/recommendations/:id` — human approval, scheduling and completion workflow with audited outcomes
 
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`
