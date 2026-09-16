@@ -5,7 +5,11 @@ import { persistPaidServiceOrder } from '../src/integrations/woocommerce-persist
 const paidOrder = {
   id: 9001, status: 'processing', customer_id: 77, total: '575.00',
   billing: { first_name: 'Test', last_name: 'Customer', email: 'test@example.com', phone: '+966500000001', address_1: 'Riyadh', city: 'Riyadh' },
-  line_items: [{ id: 1, name: 'Aqua Gold', sku: 'RO-7-STAGE', quantity: 1, total: '500.00', meta_data: [{ key: '_subil_requires_service', value: 'yes' }] }]
+  line_items: [{ id: 1, name: 'Aqua Gold', sku: 'RO-7-STAGE', quantity: 1, total: '500.00', meta_data: [
+    { key: '_subil_requires_service', value: 'yes' },
+    { key: '_subil_required_skill', value: 'ro-install' },
+    { key: '_subil_service_duration_minutes', value: '90' }
+  ] }]
 };
 
 function fakePool({ duplicate = false } = {}) {
@@ -22,7 +26,9 @@ function fakePool({ duplicate = false } = {}) {
       if (/INSERT INTO service_locations/.test(sql)) return { rows: [{ id: 'l1' }] };
       if (/INSERT INTO orders/.test(sql)) return { rows: [{ id: 'o1', external_order_id: '9001' }] };
       if (/INSERT INTO order_items/.test(sql)) return { rows: [] };
-      if (/INSERT INTO service_jobs/.test(sql)) return { rows: [{ id: 'j1', status: 'pending_assignment' }] };
+      if (/SUM\(quantity \* unit_cost_snapshot\)/.test(sql)) return { rows: [{ product_cost: '320.00' }] };
+      if (/INSERT INTO order_costs/.test(sql)) return { rows: [] };
+      if (/INSERT INTO service_jobs/.test(sql)) return { rows: [{ id: 'j1', status: 'pending_assignment', required_skill_code: params[5], service_duration_minutes: params[6] }] };
       if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
       throw new Error(`Unexpected query: ${sql}`);
     },
@@ -31,15 +37,20 @@ function fakePool({ duplicate = false } = {}) {
   return { pool: { connect: async () => client }, calls, customerCreated: () => customerCreated };
 }
 
-test('paid WooCommerce service order creates customer order and pending job atomically', async () => {
+test('paid WooCommerce service order creates customer order pending job and finance snapshot atomically', async () => {
   const f = fakePool();
   const result = await persistPaidServiceOrder(f.pool, paidOrder, { cityId: 'riyadh' });
   assert.equal(result.job.status, 'pending_assignment');
+  assert.equal(result.job.required_skill_code, 'ro-install');
+  assert.equal(result.job.service_duration_minutes, 90);
   assert.equal(result.duplicate, false);
+  assert.equal(result.productCost, 320);
   assert.equal(f.customerCreated(), true);
   assert.ok(f.calls.some(c => /woocommerce\.service_job_created/.test(c.sql)));
   assert.ok(f.calls.some(c => /INSERT INTO order_items/.test(c.sql) && c.params[1] === '1'));
   assert.ok(f.calls.some(c => /INSERT INTO order_items/.test(c.sql) && c.params[3] === 'RO-7-STAGE' && c.params[6] === 500));
+  assert.ok(f.calls.some(c => /INSERT INTO order_costs/.test(c.sql) && c.params[1] === 320));
+  assert.ok(f.calls.some(c => /INSERT INTO service_jobs/.test(c.sql) && c.params[5] === 'ro-install' && c.params[6] === 90));
   assert.ok(f.calls.some(c => c.sql === 'COMMIT'));
 });
 

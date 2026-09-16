@@ -1,7 +1,9 @@
 import { acceptWooCommerceWebhook } from './woocommerce-webhook.mjs';
 import { persistPaidServiceOrder } from './woocommerce-persistence.mjs';
 
-export async function ingestWooCommerceOrderWebhook(db, { rawBody, headers, secret, cityId = 'riyadh' }) {
+const DEFAULT_ORG = '00000000-0000-4000-8000-000000000001';
+
+export async function ingestWooCommerceOrderWebhook(db, { rawBody, headers, secret, cityId = 'riyadh', organizationId = DEFAULT_ORG }) {
   const accepted = await acceptWooCommerceWebhook(db, { rawBody, headers, secret });
   if (!accepted.accepted) {
     return { accepted: false, duplicate: true, deliveryKey: accepted.deliveryKey, serviceRequired: false, job: null };
@@ -14,6 +16,6 @@ export async function ingestWooCommerceOrderWebhook(db, { rawBody, headers, secr
     throw new Error('Invalid WooCommerce webhook JSON');
   }
 
-  const persisted = await persistPaidServiceOrder(db, order, { cityId });
+  const persisted = await persistPaidServiceOrder(db, order, { cityId, organizationId });
   return { ...accepted, ...persisted };
 }

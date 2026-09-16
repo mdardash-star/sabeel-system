@@ -31,6 +31,12 @@ export function customerIdentityFromOrder(order) {
   };
 }
 
+function metaValue(item, key) {
+  const meta = Array.isArray(item?.meta_data) ? item.meta_data : [];
+  const entry = meta.find(value => value.key === key);
+  return entry?.value ?? null;
+}
+
 export function serviceJobFromPaidOrder(order, options = {}) {
   if (!order?.id) throw new Error('WooCommerce order id is required');
   if (!['processing', 'completed'].includes(order.status)) {
@@ -40,6 +46,9 @@ export function serviceJobFromPaidOrder(order, options = {}) {
 
   const identity = customerIdentityFromOrder(order);
   const customerId = options.customerId ? String(options.customerId) : null;
+  const serviceItems = order.line_items.filter(item => String(metaValue(item, '_subil_requires_service')) === 'yes');
+  const requiredSkillCode = serviceItems.map(item => String(metaValue(item, '_subil_required_skill') || '').trim()).find(Boolean) || null;
+  const durationValue = serviceItems.map(item => Number(metaValue(item, '_subil_service_duration_minutes'))).find(value => Number.isInteger(value) && value > 0 && value <= 1440);
 
   return {
     source: 'woocommerce',
@@ -48,6 +57,8 @@ export function serviceJobFromPaidOrder(order, options = {}) {
     status: 'pending_assignment',
     customerId,
     customerIdentityKey: identity.identityKey,
+    requiredSkillCode,
+    serviceDurationMinutes: durationValue || 60,
     customer: {
       name: [order.billing?.first_name, order.billing?.last_name].filter(Boolean).join(' ').trim()
     },
@@ -56,9 +67,6 @@ export function serviceJobFromPaidOrder(order, options = {}) {
       address2: order.shipping?.address_2 || order.billing?.address_2 || '',
       city: order.shipping?.city || order.billing?.city || ''
     },
-    items: order.line_items.filter(item => {
-      const meta = Array.isArray(item.meta_data) ? item.meta_data : [];
-      return meta.some(entry => entry.key === '_subil_requires_service' && String(entry.value) === 'yes');
-    }).map(item => ({ externalLineItemId: String(item.id), name: item.name, quantity: item.quantity }))
+    items: serviceItems.map(item => ({ externalLineItemId: String(item.id), name: item.name, quantity: item.quantity }))
   };
 }
