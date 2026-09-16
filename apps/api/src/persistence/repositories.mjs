@@ -565,6 +565,56 @@ export function createRepositories(db) {
       }
     },
 
+    purchasing: {
+      async stats() {
+        const { rows } = await db.query(
+          `SELECT COUNT(*) FILTER (WHERE status IN ('draft','approved','partially_received'))::integer AS open_orders,
+                  COUNT(*) FILTER (WHERE status = 'draft')::integer AS pending_approval,
+                  COUNT(*) FILTER (WHERE status IN ('approved','partially_received'))::integer AS awaiting_receipt,
+                  COUNT(*) FILTER (WHERE status IN ('approved','partially_received') AND expected_at < now())::integer AS overdue,
+                  COUNT(*) FILTER (WHERE status = 'received' AND updated_at >= date_trunc('month', now()))::integer AS received_this_month,
+                  COALESCE(SUM(subtotal) FILTER (WHERE status IN ('draft','approved','partially_received')), 0)::numeric(14,2) AS open_value
+           FROM purchase_orders`
+        );
+        return rows[0];
+      },
+      async suppliers({ query = '', limit = 100, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT s.*, COUNT(po.id)::integer AS order_count,
+                  COALESCE(SUM(po.subtotal) FILTER (WHERE po.status <> 'cancelled'), 0)::numeric(14,2) AS total_spend,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM suppliers s LEFT JOIN purchase_orders po ON po.supplier_id = s.id
+           WHERE s.is_active AND ($1 = '' OR s.name ILIKE '%' || $1 || '%' OR s.mobile LIKE '%' || $1 || '%')
+           GROUP BY s.id ORDER BY s.name ASC LIMIT $2 OFFSET $3`, [query.trim(), limit, offset]
+        );
+        return rows;
+      },
+      async list({ query = '', status = 'all', limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT po.*, s.name AS supplier_name, w.name AS warehouse_name,
+                  COALESCE(lines.item_count, 0)::integer AS item_count,
+                  COALESCE(lines.ordered_units, 0)::numeric(12,2) AS ordered_units,
+                  COALESCE(lines.received_units, 0)::numeric(12,2) AS received_units,
+                  COALESCE(lines.items, '[]'::json) AS items,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id JOIN warehouses w ON w.id = po.warehouse_id
+           LEFT JOIN LATERAL (
+             SELECT COUNT(*) AS item_count, SUM(poi.ordered_quantity) AS ordered_units, SUM(poi.received_quantity) AS received_units,
+                    JSON_AGG(JSON_BUILD_OBJECT('id', poi.id, 'item_id', poi.item_id, 'sku', i.sku, 'name', i.name,
+                      'unit', i.unit, 'ordered_quantity', poi.ordered_quantity, 'received_quantity', poi.received_quantity,
+                      'unit_cost', poi.unit_cost) ORDER BY i.name) AS items
+             FROM purchase_order_items poi JOIN inventory_items i ON i.id = poi.item_id WHERE poi.purchase_order_id = po.id
+           ) lines ON true
+           WHERE ($1 = '' OR po.po_number ILIKE '%' || $1 || '%' OR s.name ILIKE '%' || $1 || '%')
+             AND CASE $2 WHEN 'overdue' THEN po.status IN ('approved','partially_received') AND po.expected_at < now()
+                         WHEN 'all' THEN true ELSE po.status = $2 END
+           ORDER BY CASE WHEN po.status IN ('approved','partially_received') AND po.expected_at < now() THEN 0 ELSE 1 END,
+                    po.created_at DESC LIMIT $3 OFFSET $4`, [query.trim(), status, limit, offset]
+        );
+        return rows;
+      }
+    },
+
     inventory: {
       async stats() {
         const { rows } = await db.query(
