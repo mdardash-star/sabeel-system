@@ -12,7 +12,11 @@ const paidOrder = {
     id: 10,
     name: 'Installation product',
     quantity: 1,
-    meta_data: [{ key: '_subil_requires_service', value: 'yes' }]
+    meta_data: [
+      { key: '_subil_requires_service', value: 'yes' },
+      { key: '_subil_required_skill', value: 'ro-install' },
+      { key: '_subil_service_duration_minutes', value: '90' }
+    ]
   }]
 };
 
@@ -31,7 +35,7 @@ test('creates stable customer identity without exposing phone on technician job 
   assert.equal(identity.email, 'customer@example.com');
 });
 
-test('maps a paid service order to pending assignment and internal customer id', () => {
+test('maps a paid service order to pending assignment with skill and duration', () => {
   const job = serviceJobFromPaidOrder(paidOrder, { customerId: 'subil-customer-1' });
   assert.equal(job.status, 'pending_assignment');
   assert.equal(job.externalOrderId, '8534001');
@@ -39,7 +43,17 @@ test('maps a paid service order to pending assignment and internal customer id',
   assert.equal(job.customerIdentityKey, 'woocommerce:customer:42');
   assert.equal(job.serviceLocation.city, 'Riyadh');
   assert.equal(job.items.length, 1);
+  assert.equal(job.requiredSkillCode, 'ro-install');
+  assert.equal(job.serviceDurationMinutes, 90);
   assert.equal('phone' in job.customer, false);
+});
+
+test('defaults service duration to 60 minutes and skill to null when metadata is absent', () => {
+  const order = structuredClone(paidOrder);
+  order.line_items[0].meta_data = [{ key: '_subil_requires_service', value: 'yes' }];
+  const job = serviceJobFromPaidOrder(order);
+  assert.equal(job.requiredSkillCode, null);
+  assert.equal(job.serviceDurationMinutes, 60);
 });
 
 test('uses deterministic guest identity when WooCommerce customer data is unavailable', () => {
