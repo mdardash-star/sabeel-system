@@ -5,6 +5,7 @@ import { assignPersistentJob, listDispatchCandidates, reassignPersistentJob } fr
 import { detectJobEscalations, resolveJobEscalations } from '../jobs/escalations.mjs';
 import { createInventoryItem, issueInventoryToTechnician, receiveInventory, transferInventory } from '../inventory/operations.mjs';
 import { approvePurchaseOrder, createPurchaseOrder, createSupplier, receivePurchaseOrder } from '../purchasing/operations.mjs';
+import { createCampaign, createSegment, launchCampaign, previewAudience } from '../marketing/operations.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
@@ -161,6 +162,43 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const report = await createRepositories(db).reports.profitability(range.from, range.to);
     return response(200, { ...report, range });
   }
+
+  if (method === 'GET' && url === '/api/v1/marketing/stats') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    return response(200,{stats:await createRepositories(db).marketing.stats()});
+  }
+  if (method === 'GET' && url === '/api/v1/marketing/segments') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    return response(200,{segments:await createRepositories(db).marketing.segments()});
+  }
+  if (method === 'GET' && url === '/api/v1/marketing/campaigns') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const pagination=parsePagination(context),status=context.status||'all';
+    if(!pagination)return response(400,{error:'invalid_pagination'});
+    if(!['all','draft','scheduled','queued','completed','cancelled'].includes(status))return response(400,{error:'invalid_campaign_status'});
+    const rows=await createRepositories(db).marketing.campaigns({...pagination,status});
+    return response(200,{campaigns:rows.map(({total_count,...item})=>item),pagination:{...pagination,total:rows[0]?.total_count||0},status});
+  }
+  if (method === 'GET' && url === '/api/v1/marketing/audience-preview') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const segmentType=context.segmentType||'all';
+    if(!validSegmentType(segmentType))return response(400,{error:'invalid_segment_type'});
+    return response(200,await previewAudience(db,segmentType,10));
+  }
+  if (method === 'POST' && url === '/api/v1/marketing/segments') {
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});
+    const name=cleanOptional(body.name),segmentType=cleanOptional(body.segmentType);
+    if(name.length<2||name.length>120||!validSegmentType(segmentType))return response(400,{error:'invalid_segment'});
+    try{return response(201,{segment:await createSegment(db,{name,segmentType,actorUserId:context.userId})});}catch(error){if(error.code==='23505')return response(409,{error:'segment_exists'});throw error;}
+  }
+  if (method === 'POST' && url === '/api/v1/marketing/campaigns') {
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});
+    const name=cleanOptional(body.name),segmentId=cleanOptional(body.segmentId),channel=cleanOptional(body.channel),message=cleanOptional(body.message),scheduledAt=body.scheduledAt?parseDate(body.scheduledAt):null;
+    if(name.length<2||name.length>160||!segmentId||!['whatsapp','sms','email'].includes(channel)||message.length<3||message.length>1500||(body.scheduledAt&&!scheduledAt))return response(400,{error:'invalid_campaign'});
+    try{return response(201,{campaign:await createCampaign(db,{name,segmentId,channel,message,scheduledAt,actorUserId:context.userId})});}catch(error){if(error.message.includes('not found'))return response(404,{error:'segment_not_found'});throw error;}
+  }
+  const campaignLaunchMatch=url.match(/^\/api\/v1\/marketing\/campaigns\/([^/]+)\/launch$/);
+  if(method==='POST'&&campaignLaunchMatch){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});try{const result=await launchCampaign(db,{campaignId:campaignLaunchMatch[1],actorUserId:context.userId});return result?response(200,result):response(404,{error:'campaign_not_found'});}catch(error){if(error.message.includes('not launchable'))return response(409,{error:'campaign_not_launchable'});throw error;}}
 
   if (method === 'GET' && url === '/api/v1/settlements') {
     if (!can(role, 'settlements:read')) return response(403, { error: 'forbidden' });
@@ -714,6 +752,8 @@ function parseDateRange(fromValue, toValue) {
 function validInventoryNumber(value, allowZero) {
   return Number.isFinite(value) && (allowZero ? value >= 0 : value > 0) && value <= 1_000_000;
 }
+
+function validSegmentType(value){return ['all','repeat_customers','dormant_90d','maintenance_due_30d','high_value'].includes(value);}
 
 function addUtcMonths(iso, months) {
   const date = new Date(iso);
