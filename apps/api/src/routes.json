@@ -24,6 +24,7 @@
     {"method": "POST", "path": "/settlements/:id/approve", "module": "finance", "audit": true},
     {"method": "POST", "path": "/settlements/:id/reject", "module": "finance", "audit": true},
     {"method": "POST", "path": "/settlements/:id/paid", "module": "finance", "audit": true},
+    {"method": "GET", "path": "/reports/profitability", "module": "reports"},
     {"method": "GET", "path": "/inventory", "module": "inventory"},
     {"method": "GET", "path": "/inventory/stats", "module": "inventory"},
     {"method": "GET", "path": "/inventory/movements", "module": "inventory"},
