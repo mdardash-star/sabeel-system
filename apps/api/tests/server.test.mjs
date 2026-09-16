@@ -177,6 +177,22 @@ test('live HTTP finance records settlement payment',async(t)=>{
   const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/settlements/s1/paid`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({paymentReference:'TRX-100'})});assert.equal(response.status,200);assert.equal((await response.json()).settlement.status,'paid');
 });
 
+test('live HTTP inventory worklist forwards stock filter and pagination',async(t)=>{
+  const db={query:async(sql,params)=>{assert.match(sql,/stock_status/);assert.deepEqual(params,['ممبرين','low',5,10]);return{rows:[{id:'i1',sku:'MEM-75',stock_status:'low',total_count:3}]};}};const server=createApiServer({db:withSession(db,{role:'branch_manager'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/inventory?status=low&q=${encodeURIComponent('ممبرين')}&limit=5&offset=10`,{headers:authHeaders});const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.items[0].sku,'MEM-75');assert.equal(payload.pagination.total,3);
+});
+
+test('live HTTP manager receives warehouse stock atomically',async(t)=>{
+  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/CROSS JOIN warehouses/.test(sql))return{rows:[{id:'i1',warehouse_id:'main-riyadh'}]};if(/INSERT INTO inventory_balances/.test(sql))return{rows:[{warehouse_id:'main-riyadh',item_id:'i1',quantity:'5'}]};if(/UPDATE inventory_items/.test(sql))return{rows:[]};if(/INSERT INTO inventory_movements/.test(sql))return{rows:[{id:'mv1',movement_type:'receipt'}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
+  const db={query:async()=>({rows:[]}),connect:async()=>client},server=createApiServer({db:withSession(db,{role:'branch_manager',userId:'manager-1'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/inventory/receive`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({warehouseId:'main-riyadh',itemId:'i1',quantity:5,unitCost:40,reference:'PO-1'})});const payload=await response.json();assert.equal(response.status,201);assert.equal(payload.balance.quantity,'5');
+});
+
+test('live HTTP manager reads technician inventory custody',async(t)=>{
+  const db={query:async(sql,params)=>{assert.match(sql,/technician_inventory/);assert.deepEqual(params,['t1']);return{rows:[{technician_id:'t1',sku:'MEM-75',quantity:'3'}]};}};const server=createApiServer({db:withSession(db,{role:'branch_manager'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/technicians/t1/inventory`,{headers:authHeaders});const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.stock[0].sku,'MEM-75');
+});
+
 test('live HTTP technician roster forwards filters and pagination',async(t)=>{
   const db={query:async(sql,params)=>{assert.match(sql,/on_time_30d/);assert.deepEqual(params,['الرياض','active',5,10]);return{rows:[{id:'tech-1',mobile:'+966500000001',is_active:true,total_count:12}]};}};
   const server=createApiServer({db:withSession(db,{role:'dispatcher'})});
