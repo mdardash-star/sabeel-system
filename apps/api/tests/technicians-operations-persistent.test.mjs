@@ -9,9 +9,18 @@ test('dispatcher reads technician operations counters',async()=>{
 });
 
 test('branch manager filters paginated technician performance roster',async()=>{
-  const db={query:async(sql,params)=>{assert.match(sql,/technician_skills/);assert.match(sql,/on_time_30d/);assert.deepEqual(params,['9665','active',10,20]);return{rows:[{id:'tech-1',mobile:'+966500000001',is_active:true,total_count:14}]};}};
+  const db={query:async(sql,params)=>{assert.match(sql,/technician_skills/);assert.match(sql,/on_time_30d/);assert.deepEqual(params,[null,'9665','active',10,20]);return{rows:[{id:'tech-1',mobile:'+966500000001',is_active:true,total_count:14}]};}};
   const result=await routePersistentRequest({method:'GET',url:'/api/v1/technicians',role:'branch_manager',context:{query:'9665',status:'active',limit:'10',offset:'20'},db});
   assert.equal(result.status,200);assert.equal(result.data.technicians[0].id,'tech-1');assert.deepEqual(result.data.pagination,{limit:10,offset:20,total:14});
+});
+
+test('technician roster and performance are tenant constrained',async()=>{
+  const tenantId='00000000-0000-4000-8000-000000000001',calls=[];
+  const db={query:async(sql,params)=>{calls.push({sql,params});return{rows:[]}}};
+  await routePersistentRequest({method:'GET',url:'/api/v1/technicians',role:'branch_manager',context:{tenantId},db});
+  await routePersistentRequest({method:'GET',url:'/api/v1/technicians/foreign/performance',role:'dispatcher',context:{tenantId,from:'2026-08-01',to:'2026-09-01'},db});
+  assert.match(calls[0].sql,/u\.organization_id=\$1/);assert.deepEqual(calls[0].params,[tenantId,'','all',20,0]);
+  assert.match(calls[1].sql,/u\.organization_id=\$4/);assert.deepEqual(calls[1].params,['foreign','2026-08-01T00:00:00.000Z','2026-09-01T00:00:00.000Z',tenantId]);
 });
 
 test('technician performance includes bounded metrics and recent jobs',async()=>{
@@ -51,4 +60,11 @@ test('branch manager deactivates technician and records the reason atomically',a
 test('unchanged technician status returns conflict and rolls back',async()=>{
   const {db,calls}=statusDb(false);const result=await routePersistentRequest({method:'PATCH',url:'/api/v1/technicians/tech-1/status',role:'branch_manager',context:{userId:'manager-1'},body:{isActive:false,reason:'لا يزال متوقفًا'},db});
   assert.equal(result.status,409);assert.ok(calls.some(call=>call.sql==='ROLLBACK'));assert.ok(!calls.some(call=>/UPDATE technicians/.test(call.sql)));
+});
+
+test('technician status mutation cannot cross tenant boundary',async()=>{
+  const tenantId='00000000-0000-4000-8000-000000000001',calls=[];
+  const client={query:async(sql,params=[])=>{calls.push({sql,params});return{rows:[]}},release(){}};
+  const result=await routePersistentRequest({method:'PATCH',url:'/api/v1/technicians/foreign/status',role:'branch_manager',context:{userId:'manager-1',tenantId},body:{isActive:false,reason:'خارج النطاق'},db:{query:async()=>({rows:[]}),connect:async()=>client}});
+  assert.equal(result.status,404);const locked=calls.find(x=>/FROM technicians t JOIN users/.test(x.sql));assert.deepEqual(locked.params,['foreign',tenantId]);assert.ok(calls.some(x=>x.sql==='COMMIT'));assert.ok(!calls.some(x=>/UPDATE technicians/.test(x.sql)));
 });
