@@ -5,9 +5,16 @@ import { routePersistentRequest } from '../src/http/persistent-router.mjs';
 function customerDb(handler){return{query:handler,connect:async()=>({query:handler,release(){}})}}
 
 test('customer reads only profile linked to signed-in user',async()=>{
-  const db=customerDb(async(sql,params)=>{assert.match(sql,/c\.user_id=\$1/);assert.deepEqual(params,['u1']);return{rows:[{id:'c1',name:'سعد',mobile:'+966500000000'}]}});
+  const db=customerDb(async(sql,params)=>{assert.match(sql,/c\.user_id=\$1/);assert.deepEqual(params,['u1',null]);return{rows:[{id:'c1',name:'سعد',mobile:'+966500000000'}]}});
   const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/me',role:'customer',context:{userId:'u1'},db});
   assert.equal(result.status,200);assert.equal(result.data.customer.id,'c1');
+});
+
+test('customer profile cannot cross authenticated tenant boundary',async()=>{
+  const tenantId='00000000-0000-4000-8000-000000000001';
+  const db=customerDb(async(sql,params)=>{assert.match(sql,/u\.organization_id=\$2/);assert.deepEqual(params,['u1',tenantId]);return{rows:[]}});
+  const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/me',role:'customer',context:{userId:'u1',tenantId},db});
+  assert.equal(result.status,403);assert.equal(result.data.error,'customer_profile_required');
 });
 
 test('non-customer cannot access customer portal',async()=>{
