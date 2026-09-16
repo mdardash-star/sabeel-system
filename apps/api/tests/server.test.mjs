@@ -86,7 +86,7 @@ test('persistent routes ignore forged role and user headers without Bearer sessi
 test('live HTTP customer search forwards pagination and query to PostgreSQL', async (t) => {
   const db={query:async(sql,params)=>{
     assert.match(sql,/FROM customers c/);
-    assert.deepEqual(params,['نورة',5,10]);
+    assert.deepEqual(params,[organizationId,'نورة',5,10]);
     return{rows:[{id:'customer-1',name:'نورة',mobile:'+966500000000',total_count:13}]};
   }};
   const server=createApiServer({db:withSession(db,{role:'support'})});
