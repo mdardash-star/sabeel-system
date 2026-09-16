@@ -612,6 +612,18 @@ export function createRepositories(db) {
           FROM abandoned_carts ac LEFT JOIN customers c ON c.id=ac.customer_id
           WHERE CASE $1 WHEN 'active' THEN ac.status IN('open','notified') WHEN 'all' THEN true ELSE ac.status=$1 END
           ORDER BY CASE WHEN ac.status IN('open','notified') THEN 0 ELSE 1 END,ac.abandoned_at DESC LIMIT $2 OFFSET $3`,[status,limit,offset]);return rows;
+      },
+      async contentStats() {
+        const {rows}=await db.query(`SELECT COUNT(*)::integer AS total,COUNT(*) FILTER(WHERE status='draft')::integer AS drafts,
+          COUNT(*) FILTER(WHERE status='review')::integer AS in_review,COUNT(*) FILTER(WHERE status='approved')::integer AS approved,
+          COUNT(*) FILTER(WHERE status='scheduled')::integer AS scheduled,COUNT(*) FILTER(WHERE status='published' AND published_at>=date_trunc('month',now()))::integer AS published_this_month,
+          COALESCE(ROUND(AVG(seo_score)),0)::integer AS average_seo_score FROM marketing_content`);return rows[0];
+      },
+      async content({status='all',channel='all',from=null,to=null,limit=50,offset=0}={}) {
+        const {rows}=await db.query(`SELECT mc.*,u.mobile AS creator_mobile,COUNT(*) OVER()::integer AS total_count FROM marketing_content mc
+          LEFT JOIN users u ON u.id=mc.created_by WHERE($1='all' OR mc.status=$1)AND($2='all' OR mc.channel=$2)
+          AND($3::timestamptz IS NULL OR COALESCE(mc.scheduled_at,mc.created_at)>=$3)AND($4::timestamptz IS NULL OR COALESCE(mc.scheduled_at,mc.created_at)<$4)
+          ORDER BY COALESCE(mc.scheduled_at,mc.created_at) DESC LIMIT $5 OFFSET $6`,[status,channel,from,to,limit,offset]);return rows;
       }
     },
 
