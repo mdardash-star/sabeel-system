@@ -48,6 +48,7 @@ export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } 
         query: requestUrl.searchParams.get('q') || undefined,
         window: requestUrl.searchParams.get('window') || undefined,
         status: requestUrl.searchParams.get('status') || undefined,
+        channel: requestUrl.searchParams.get('channel') || undefined,
         jobs: []
       };
 
@@ -111,6 +112,7 @@ function isPersistentRoute(method, pathname) {
       ['/api/v1/marketing/abandoned-carts','/api/v1/marketing/abandoned-carts/stats'].includes(pathname) ||
       ['/api/v1/marketing/content','/api/v1/marketing/content/stats'].includes(pathname) ||
       pathname==='/api/v1/marketing/attribution' ||
+      ['/api/v1/conversations','/api/v1/conversations/stats'].includes(pathname) || /^\/api\/v1\/conversations\/[^/]+$/.test(pathname) ||
       pathname === '/api/v1/inventory/stats' || pathname === '/api/v1/inventory' || pathname === '/api/v1/inventory/movements' ||
       pathname === '/api/v1/purchasing/stats' || pathname === '/api/v1/purchasing/suppliers' || pathname === '/api/v1/purchasing/orders' ||
       /^\/api\/v1\/technicians\/[^/]+\/inventory$/.test(pathname) ||
@@ -131,11 +133,12 @@ function isPersistentRoute(method, pathname) {
       ['/api/v1/marketing/abandoned-carts','/api/v1/marketing/abandoned-carts/recovery/run'].includes(pathname) || /^\/api\/v1\/marketing\/abandoned-carts\/[^/]+\/recovered$/.test(pathname) ||
       pathname==='/api/v1/marketing/content' || /^\/api\/v1\/marketing\/content\/[^/]+\/transition$/.test(pathname) ||
       ['/api/v1/marketing/touches','/api/v1/marketing/spend'].includes(pathname) || /^\/api\/v1\/marketing\/orders\/[^/]+\/attribute$/.test(pathname) ||
+      pathname==='/api/v1/conversations/inbound' || /^\/api\/v1\/conversations\/[^/]+\/reply$/.test(pathname) ||
       /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+\/maintenance$/.test(pathname) ||
       /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
       /^\/api\/v1\/settlements\/[^/]+\/(?:approve|reject|paid)$/.test(pathname);
   }
-  return method === 'PATCH' && (/^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
+  return method === 'PATCH' && (/^\/api\/v1\/conversations\/[^/]+$/.test(pathname) || /^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/technicians\/[^/]+\/status$/.test(pathname) ||
     /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname));
