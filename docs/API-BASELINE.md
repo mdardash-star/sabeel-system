@@ -121,6 +121,9 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - POST `/marketing/abandoned-carts` — idempotently imports or refreshes an open cart
 - POST `/marketing/abandoned-carts/recovery/run` — queues at most two reminders per cart with a 24-hour cooldown
 - POST `/marketing/abandoned-carts/:id/recovered` — closes an active cart as recovered and optionally links its order
+- GET `/marketing/content` and `/marketing/content/stats` — filterable content calendar and workflow/SEO counters
+- POST `/marketing/content` — creates unique-slug social, blog, email or landing-page content and calculates a deterministic SEO score
+- POST `/marketing/content/:id/transition` — audited draft, review, approval, scheduling and publishing workflow
 
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`
