@@ -624,6 +624,28 @@ export function createRepositories(db) {
           LEFT JOIN users u ON u.id=mc.created_by WHERE($1='all' OR mc.status=$1)AND($2='all' OR mc.channel=$2)
           AND($3::timestamptz IS NULL OR COALESCE(mc.scheduled_at,mc.created_at)>=$3)AND($4::timestamptz IS NULL OR COALESCE(mc.scheduled_at,mc.created_at)<$4)
           ORDER BY COALESCE(mc.scheduled_at,mc.created_at) DESC LIMIT $5 OFFSET $6`,[status,channel,from,to,limit,offset]);return rows;
+      },
+      async attribution(from,to) {
+        const [summary,channels,campaigns,recent]=await Promise.all([
+          db.query(`SELECT COUNT(o.id)::integer AS paid_orders,COUNT(oa.order_id)::integer AS attributed_orders,
+            COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,COALESCE(SUM(o.total_ex_vat)FILTER(WHERE oa.order_id IS NOT NULL),0)::numeric(14,2) AS attributed_revenue,
+            COALESCE((SELECT SUM(amount)FROM marketing_spend WHERE spent_on>=$1::date AND spent_on<$2::date),0)::numeric(14,2) AS spend,
+            (SELECT COUNT(DISTINCT visitor_id)::integer FROM marketing_touches WHERE occurred_at>=$1 AND occurred_at<$2) AS visitors
+            FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id WHERE o.paid_at>=$1 AND o.paid_at<$2`,[from,to]),
+          db.query(`SELECT lt.source AS name,lt.medium,COUNT(o.id)::integer AS orders,SUM(o.total_ex_vat)::numeric(14,2) AS revenue,
+            COALESCE(sp.spend,0)::numeric(14,2) AS spend,CASE WHEN COALESCE(sp.spend,0)=0 THEN NULL ELSE ROUND(SUM(o.total_ex_vat)/sp.spend,2)END AS roas
+            FROM order_attribution oa JOIN orders o ON o.id=oa.order_id JOIN marketing_touches lt ON lt.id=oa.last_touch_id
+            LEFT JOIN LATERAL(SELECT SUM(amount)AS spend FROM marketing_spend WHERE source=lt.source AND spent_on>=$1::date AND spent_on<$2::date)sp ON true
+            WHERE o.paid_at>=$1 AND o.paid_at<$2 GROUP BY lt.source,lt.medium,sp.spend ORDER BY revenue DESC`,[from,to]),
+          db.query(`SELECT COALESCE(NULLIF(lt.campaign,''),'بدون حملة')AS name,lt.source,COUNT(o.id)::integer AS orders,SUM(o.total_ex_vat)::numeric(14,2)AS revenue,
+            COALESCE(sp.spend,0)::numeric(14,2)AS spend FROM order_attribution oa JOIN orders o ON o.id=oa.order_id JOIN marketing_touches lt ON lt.id=oa.last_touch_id
+            LEFT JOIN LATERAL(SELECT SUM(amount)AS spend FROM marketing_spend WHERE source=lt.source AND campaign=lt.campaign AND spent_on>=$1::date AND spent_on<$2::date)sp ON true
+            WHERE o.paid_at>=$1 AND o.paid_at<$2 GROUP BY lt.campaign,lt.source,sp.spend ORDER BY revenue DESC LIMIT 20`,[from,to]),
+          db.query(`SELECT o.id,o.external_order_id,o.total_ex_vat,o.paid_at,c.name AS customer_name,ft.source AS first_source,ft.campaign AS first_campaign,
+            lt.source AS last_source,lt.campaign AS last_campaign FROM order_attribution oa JOIN orders o ON o.id=oa.order_id JOIN customers c ON c.id=o.customer_id
+            LEFT JOIN marketing_touches ft ON ft.id=oa.first_touch_id LEFT JOIN marketing_touches lt ON lt.id=oa.last_touch_id
+            WHERE o.paid_at>=$1 AND o.paid_at<$2 ORDER BY o.paid_at DESC LIMIT 30`,[from,to])
+        ]);const s=summary.rows[0]||{};s.roas=Number(s.spend)>0?Number(s.attributed_revenue)/Number(s.spend):null;s.attribution_rate=Number(s.paid_orders)>0?Number(s.attributed_orders)/Number(s.paid_orders)*100:0;return{summary:s,channels:channels.rows,campaigns:campaigns.rows,recent:recent.rows};
       }
     },
 
