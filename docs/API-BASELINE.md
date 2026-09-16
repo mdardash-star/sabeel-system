@@ -94,6 +94,10 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - POST `/inventory/transfer` — atomically moves stock between different active warehouses without allowing a negative balance
 - POST `/inventory/technician-issue` — atomically deducts warehouse stock and credits the active technician's custody
 
+## Reports
+- GET `/reports/profitability?from=<ISO>&to=<ISO>` — finance-authorized order profitability summary, daily trend, product, city and channel breakdowns, and the latest 50 orders
+- Product cost is snapshotted from the matching inventory SKU when a WooCommerce line item is ingested, preserving historical margin accuracy.
+
 ## Purchasing
 - GET `/purchasing/stats` — open, approval, receipt, overdue and value counters
 - GET `/purchasing/suppliers?q=&limit=20&offset=0` — active suppliers with order count and spend
