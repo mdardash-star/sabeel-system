@@ -212,14 +212,15 @@ export function createRepositories(db) {
           throw error;
         } finally { client.release(); }
       },
-      async update(id, { name, mobile }) {
+      async update(id, { name, mobile }, tenantId = null) {
         if (!db.connect) throw new Error('Database transaction support is required');
         const client = await db.connect();
         try {
           await client.query('BEGIN');
           const current = await client.query(
-            `SELECT c.id, c.user_id, c.name, u.mobile FROM customers c
-             LEFT JOIN users u ON u.id = c.user_id WHERE c.id = $1 FOR UPDATE OF c`, [id]
+            `SELECT c.id,c.user_id,c.name,u.mobile FROM customers c
+             LEFT JOIN users u ON u.id=c.user_id
+             WHERE c.id=$1 AND ($2::uuid IS NULL OR c.organization_id=$2) FOR UPDATE OF c`,[id,tenantId]
           );
           if (!current.rows[0]) { await client.query('ROLLBACK'); return null; }
           const customer = current.rows[0];
@@ -238,23 +239,24 @@ export function createRepositories(db) {
           throw error;
         } finally { client.release(); }
       },
-      async addAddress(customerId, { cityId, addressText }) {
+      async addAddress(customerId, { cityId, addressText }, tenantId = null) {
         const { rows } = await db.query(
           `INSERT INTO service_locations (customer_id, city_id, address_text)
-           SELECT id, $2, $3 FROM customers WHERE id = $1
+           SELECT id,$2,$3 FROM customers WHERE id=$1 AND ($4::uuid IS NULL OR organization_id=$4)
            RETURNING id, customer_id, city_id, address_text, created_at`,
-          [customerId, cityId, addressText]
+          [customerId,cityId,addressText,tenantId]
         );
         return rows[0] || null;
       },
-      async addAsset(customerId, { productId, serialNumber, installedAt, warrantyEndsAt, maintenanceIntervalMonths, nextMaintenanceAt }) {
+      async addAsset(customerId, { productId, serialNumber, installedAt, warrantyEndsAt, maintenanceIntervalMonths, nextMaintenanceAt }, tenantId = null) {
         const { rows } = await db.query(
           `INSERT INTO installed_assets
              (customer_id, product_id, serial_number, installed_at, warranty_ends_at, maintenance_interval_months, next_maintenance_at)
-           SELECT id, $2, $3, $4, $5, $6, $7 FROM customers WHERE id = $1
+           SELECT id,$2,$3,$4,$5,$6,$7 FROM customers
+           WHERE id=$1 AND ($8::uuid IS NULL OR organization_id=$8)
            RETURNING id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
                      maintenance_interval_months, next_maintenance_at, status, created_at`,
-          [customerId, productId, serialNumber, installedAt, warrantyEndsAt, maintenanceIntervalMonths, nextMaintenanceAt]
+          [customerId,productId,serialNumber,installedAt,warrantyEndsAt,maintenanceIntervalMonths,nextMaintenanceAt,tenantId]
         );
         return rows[0] || null;
       },
@@ -279,12 +281,13 @@ export function createRepositories(db) {
         );
         return rows;
       },
-      async findAsset(customerId, assetId) {
+      async findAsset(customerId, assetId, tenantId = null) {
         const { rows } = await db.query(
-          `SELECT id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
-                  maintenance_interval_months, last_maintenance_at, next_maintenance_at, status
-           FROM installed_assets WHERE id = $1 AND customer_id = $2 LIMIT 1`,
-          [assetId, customerId]
+          `SELECT a.id,a.customer_id,a.product_id,a.serial_number,a.installed_at,a.warranty_ends_at,
+                  a.maintenance_interval_months,a.last_maintenance_at,a.next_maintenance_at,a.status
+           FROM installed_assets a JOIN customers c ON c.id=a.customer_id
+           WHERE a.id=$1 AND a.customer_id=$2 AND ($3::uuid IS NULL OR c.organization_id=$3) LIMIT 1`,
+          [assetId,customerId,tenantId]
         );
         return rows[0] || null;
       },
