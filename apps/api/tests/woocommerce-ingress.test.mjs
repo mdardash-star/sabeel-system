@@ -37,6 +37,8 @@ function fakePool() {
       if (/INSERT INTO service_locations/.test(sql)) return { rows: [{ id: 'l1' }] };
       if (/INSERT INTO orders/.test(sql)) return { rows: [{ id: 'o1', external_order_id: '9100' }] };
       if (/INSERT INTO order_items/.test(sql)) return { rows: [] };
+      if (/FROM order_items WHERE order_id/.test(sql)) return { rows: [{ product_cost: '0.00' }] };
+      if (/INSERT INTO order_costs/.test(sql)) return { rows: [] };
       if (/INSERT INTO service_jobs/.test(sql)) return { rows: [{ id: 'j1', status: 'pending_assignment', city_id: 'riyadh' }] };
       if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
       throw new Error(`Unexpected transactional query: ${sql}`);
