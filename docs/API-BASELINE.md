@@ -124,6 +124,10 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - GET `/marketing/content` and `/marketing/content/stats` — filterable content calendar and workflow/SEO counters
 - POST `/marketing/content` — creates unique-slug social, blog, email or landing-page content and calculates a deterministic SEO score
 - POST `/marketing/content/:id/transition` — audited draft, review, approval, scheduling and publishing workflow
+- POST `/marketing/touches` — records first-party UTM/source touchpoints for a visitor or known customer
+- POST `/marketing/orders/:id/attribute` — applies first/last-touch attribution from the preceding 30-day window
+- POST `/marketing/spend` — records audited campaign spend for ROAS calculation
+- GET `/marketing/attribution?from=<ISO>&to=<ISO>` — attributed revenue, conversion coverage, channel/campaign performance, spend and ROAS
 
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`
