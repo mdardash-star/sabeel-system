@@ -2,7 +2,7 @@
   "entities": {
     "organizations": ["id", "slug", "name", "isActive", "createdAt"],
     "users": ["id", "organizationId", "mobile", "role", "isActive", "createdAt"],
-    "customers": ["id", "userId", "name", "createdAt"],
+    "customers": ["id", "organizationId", "userId", "name", "createdAt"],
     "serviceLocations": ["id", "customerId", "cityId", "addressText", "latitude", "longitude"],
     "technicians": ["id", "userId", "cityId", "branchId", "compensationPolicyId", "isActive"],
     "orders": ["id", "externalSource", "externalOrderId", "customerId", "paidAt", "totalExVat"],
