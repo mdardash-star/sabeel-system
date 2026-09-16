@@ -15,7 +15,7 @@ export function createRepositories(db) {
         );
         return rows[0] || null;
       },
-      async operationsStats() {
+      async operationsStats(tenantId = null) {
         const { rows } = await db.query(
           `SELECT COUNT(*)::integer AS total,
                   COUNT(*) FILTER (WHERE t.is_active AND u.is_active)::integer AS active,
@@ -32,11 +32,12 @@ export function createRepositories(db) {
                     AND j.status IN ('en_route','arrived','in_progress')
                   ))::integer AS busy_now,
                   COALESCE((SELECT AVG(score) FROM service_ratings WHERE verified_service = true), 0)::numeric(3,2) AS avg_rating
-           FROM technicians t JOIN users u ON u.id = t.user_id`
+           FROM technicians t JOIN users u ON u.id = t.user_id
+           WHERE ($1::uuid IS NULL OR u.organization_id=$1)`,[tenantId]
         );
         return rows[0] || { total: 0, active: 0, inactive: 0, available_now: 0, busy_now: 0, avg_rating: 0 };
       },
-      async listForOperations({ query = '', status = 'all', limit = 20, offset = 0 } = {}) {
+      async listForOperations({ query = '', status = 'all', limit = 20, offset = 0, tenantId = null } = {}) {
         const { rows } = await db.query(
           `SELECT t.id, t.user_id, u.mobile, t.city_id, t.branch_id, t.compensation_policy_id,
                   t.is_active, t.created_at,
@@ -67,17 +68,18 @@ export function createRepositories(db) {
                     COUNT(*) FILTER (WHERE verified_service = true) AS rating_count
              FROM service_ratings WHERE technician_id = t.id
            ) ratings ON true
-           WHERE ($1 = '' OR u.mobile LIKE '%' || $1 || '%' OR t.id::text ILIKE '%' || $1 || '%'
-                  OR t.city_id ILIKE '%' || $1 || '%' OR COALESCE(t.branch_id, '') ILIKE '%' || $1 || '%')
-             AND CASE $2 WHEN 'active' THEN t.is_active AND u.is_active
+           WHERE ($1::uuid IS NULL OR u.organization_id=$1)
+             AND ($2 = '' OR u.mobile LIKE '%' || $2 || '%' OR t.id::text ILIKE '%' || $2 || '%'
+                  OR t.city_id ILIKE '%' || $2 || '%' OR COALESCE(t.branch_id, '') ILIKE '%' || $2 || '%')
+             AND CASE $3 WHEN 'active' THEN t.is_active AND u.is_active
                          WHEN 'inactive' THEN NOT t.is_active OR NOT u.is_active ELSE true END
            ORDER BY t.is_active DESC, metrics.active_jobs DESC, metrics.completed_30d DESC, t.created_at DESC
-           LIMIT $3 OFFSET $4`,
-          [query.trim(), status, limit, offset]
+           LIMIT $4 OFFSET $5`,
+          [tenantId,query.trim(),status,limit,offset]
         );
         return rows;
       },
-      async performance(id, from, to) {
+      async performance(id, from, to, tenantId = null) {
         const { rows } = await db.query(
           `SELECT t.id, t.user_id, u.mobile, t.city_id, t.branch_id, t.compensation_policy_id, t.is_active,
                   COALESCE(j.assigned, 0)::integer AS assigned,
@@ -110,8 +112,8 @@ export function createRepositories(db) {
                     SUM(payout_amount) FILTER (WHERE status = 'pending_approval') AS pending_payout
              FROM technician_settlements WHERE technician_id = t.id AND created_at >= $2 AND created_at < $3
            ) s ON true
-           WHERE t.id = $1 LIMIT 1`,
-          [id, from, to]
+           WHERE t.id=$1 AND ($4::uuid IS NULL OR u.organization_id=$4) LIMIT 1`,
+          [id,from,to,tenantId]
         );
         return rows[0] || null;
       },
