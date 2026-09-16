@@ -48,6 +48,7 @@ const navItems: Array<{ label: string; icon: IconName; active?: boolean; badge?:
   { label: "المالية", icon: "wallet" },
   { label: "المخزون", icon: "inventory" },
   { label: "التقارير", icon: "reports" },
+  { label: "التسويق", icon: "bell" },
 ];
 
 const stats = [
@@ -83,7 +84,7 @@ export default function Dashboard() {
         <nav className="nav" aria-label="التنقل الرئيسي">
           <p className="nav-label">القائمة الرئيسية</p>
           {navItems.map((item) => (
-            <a className={`nav-item${item.active ? " active" : ""}`} href={item.icon === "orders" ? "/jobs" : item.icon === "customers" ? "/customers" : item.icon === "tech" ? "/technicians" : item.icon === "calendar" ? "/maintenance" : item.icon === "wallet" ? "/finance" : item.icon === "inventory" ? "/inventory" : item.icon === "reports" ? "/reports" : "#"} key={item.label}>
+            <a className={`nav-item${item.active ? " active" : ""}`} href={item.icon === "orders" ? "/jobs" : item.icon === "customers" ? "/customers" : item.icon === "tech" ? "/technicians" : item.icon === "calendar" ? "/maintenance" : item.icon === "wallet" ? "/finance" : item.icon === "inventory" ? "/inventory" : item.icon === "reports" ? "/reports" : item.label === "التسويق" ? "/marketing" : "#"} key={item.label}>
               <Icon name={item.icon} /><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}
             </a>
           ))}
