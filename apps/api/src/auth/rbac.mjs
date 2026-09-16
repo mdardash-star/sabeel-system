@@ -4,7 +4,7 @@ const permissions = {
   dispatcher: ['jobs:read', 'jobs:assign', 'jobs:schedule', 'customers:service-view', 'technicians:read', 'inventory:read'],
   support: ['customers:read', 'customers:create', 'customers:update', 'orders:read', 'jobs:read'],
   finance: ['settlements:read', 'settlements:approve', 'reports:finance', 'inventory:read', 'purchasing:read'],
-  branch_manager: ['jobs:read', 'jobs:assign', 'jobs:schedule', 'customers:read', 'customers:create', 'customers:update', 'settlements:read', 'technicians:read', 'technicians:update', 'inventory:read', 'inventory:update', 'purchasing:read', 'purchasing:update'],
+  branch_manager: ['jobs:read', 'jobs:assign', 'jobs:schedule', 'customers:read', 'customers:create', 'customers:update', 'settlements:read', 'reports:finance', 'technicians:read', 'technicians:update', 'inventory:read', 'inventory:update', 'purchasing:read', 'purchasing:update'],
   admin: ['*'],
   super_admin: ['*']
 };
