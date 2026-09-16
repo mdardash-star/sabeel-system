@@ -498,7 +498,7 @@ export function createRepositories(db) {
     },
 
     settlements: {
-      async operationsStats() {
+      async operationsStats(tenantId = null) {
         const { rows } = await db.query(
           `SELECT COUNT(*)::integer AS total,
                   COUNT(*) FILTER (WHERE status = 'pending_approval')::integer AS pending_approval,
@@ -508,11 +508,13 @@ export function createRepositories(db) {
                   COALESCE(SUM(payout_amount) FILTER (WHERE status = 'pending_approval'), 0)::numeric(12,2) AS pending_amount,
                   COALESCE(SUM(payout_amount) FILTER (WHERE status = 'approved'), 0)::numeric(12,2) AS approved_amount,
                   COALESCE(SUM(payout_amount) FILTER (WHERE status = 'paid' AND approved_at >= date_trunc('month', now())), 0)::numeric(12,2) AS paid_this_month
-           FROM technician_settlements`
+           FROM technician_settlements s
+           JOIN service_jobs j ON j.id = s.job_id
+           WHERE ($1::uuid IS NULL OR j.organization_id = $1)`, [tenantId]
         );
         return rows[0] || { total: 0, pending_approval: 0, approved: 0, rejected: 0, paid: 0, pending_amount: 0, approved_amount: 0, paid_this_month: 0 };
       },
-      async listForOperations({ query = '', status = 'all', limit = 20, offset = 0 } = {}) {
+      async listForOperations({ query = '', status = 'all', limit = 20, offset = 0, tenantId = null } = {}) {
         const { rows } = await db.query(
           `SELECT s.id, s.job_id, s.technician_id, u.mobile AS technician_mobile,
                   j.customer_id, c.name AS customer_name, o.external_order_id,
@@ -526,13 +528,14 @@ export function createRepositories(db) {
            JOIN service_jobs j ON j.id = s.job_id
            JOIN customers c ON c.id = j.customer_id
            JOIN orders o ON o.id = j.order_id
-           WHERE ($1 = '' OR s.id::text ILIKE '%' || $1 || '%' OR s.job_id::text ILIKE '%' || $1 || '%'
+           WHERE ($5::uuid IS NULL OR j.organization_id = $5)
+             AND ($1 = '' OR s.id::text ILIKE '%' || $1 || '%' OR s.job_id::text ILIKE '%' || $1 || '%'
                   OR u.mobile LIKE '%' || $1 || '%' OR c.name ILIKE '%' || $1 || '%'
                   OR o.external_order_id ILIKE '%' || $1 || '%')
              AND ($2 = 'all' OR s.status = $2)
            ORDER BY CASE s.status WHEN 'pending_approval' THEN 0 WHEN 'approved' THEN 1 WHEN 'rejected' THEN 2 ELSE 3 END,
                     s.created_at ASC, s.id ASC LIMIT $3 OFFSET $4`,
-          [query.trim(), status, limit, offset]
+          [query.trim(), status, limit, offset, tenantId]
         );
         return rows;
       },
@@ -709,39 +712,42 @@ export function createRepositories(db) {
     },
 
     reports: {
-      async profitability(from, to) {
+      async profitability(from, to, tenantId = null) {
         const base = `FROM orders o JOIN customers c ON c.id = o.customer_id
           LEFT JOIN LATERAL (SELECT COALESCE(SUM(quantity * unit_cost_snapshot), 0) AS product_cost FROM order_items WHERE order_id = o.id) items ON true
           LEFT JOIN order_costs oc ON oc.order_id = o.id
           LEFT JOIN LATERAL (SELECT COALESCE(SUM(ts.payout_amount) FILTER (WHERE ts.status <> 'rejected'), 0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id = j.id WHERE j.order_id = o.id) pay ON true
           LEFT JOIN LATERAL (SELECT city_id FROM service_jobs WHERE order_id = o.id ORDER BY created_at LIMIT 1) job ON true
-          WHERE o.paid_at >= $1 AND o.paid_at < $2`;
+          WHERE o.paid_at >= $1 AND o.paid_at < $2
+            AND ($3::uuid IS NULL OR c.organization_id = $3)`;
         const [summary, trend, channels, cities, products, orders] = await Promise.all([
           db.query(`SELECT COUNT(*)::integer AS order_count, COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
             COALESCE(SUM(items.product_cost),0)::numeric(14,2) AS product_cost,
             COALESCE(SUM(COALESCE(oc.other_costs,0)),0)::numeric(14,2) AS other_costs,
             COALESCE(SUM(pay.payout),0)::numeric(14,2) AS technician_payout,
             COALESCE(SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout),0)::numeric(14,2) AS net_profit
-            ${base}`, [from, to]),
+            ${base}`, [from, to, tenantId]),
           db.query(`SELECT date_trunc('day', o.paid_at)::date AS period, COUNT(*)::integer AS orders,
             SUM(o.total_ex_vat)::numeric(14,2) AS revenue,
             SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS profit
-            ${base} GROUP BY 1 ORDER BY 1`, [from, to]),
+            ${base} GROUP BY 1 ORDER BY 1`, [from, to, tenantId]),
           db.query(`SELECT o.external_source AS name, COUNT(*)::integer AS orders, SUM(o.total_ex_vat)::numeric(14,2) AS revenue,
             SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS profit
-            ${base} GROUP BY o.external_source ORDER BY revenue DESC`, [from, to]),
+            ${base} GROUP BY o.external_source ORDER BY revenue DESC`, [from, to, tenantId]),
           db.query(`SELECT COALESCE(job.city_id,'غير محدد') AS name, COUNT(*)::integer AS orders, SUM(o.total_ex_vat)::numeric(14,2) AS revenue,
             SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS profit
-            ${base} GROUP BY COALESCE(job.city_id,'غير محدد') ORDER BY revenue DESC`, [from, to]),
+            ${base} GROUP BY COALESCE(job.city_id,'غير محدد') ORDER BY revenue DESC`, [from, to, tenantId]),
           db.query(`SELECT oi.product_name AS name, oi.sku, SUM(oi.quantity)::numeric(12,2) AS units,
             SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
             SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot))::numeric(14,2) AS gross_profit
             FROM order_items oi JOIN orders o ON o.id=oi.order_id
-            WHERE o.paid_at >= $1 AND o.paid_at < $2 GROUP BY oi.product_name,oi.sku ORDER BY revenue DESC LIMIT 20`, [from, to]),
+            JOIN customers c ON c.id=o.customer_id
+            WHERE o.paid_at >= $1 AND o.paid_at < $2 AND ($3::uuid IS NULL OR c.organization_id=$3)
+            GROUP BY oi.product_name,oi.sku ORDER BY revenue DESC LIMIT 20`, [from, to, tenantId]),
           db.query(`SELECT o.id,o.external_order_id,o.external_source,o.paid_at,o.total_ex_vat,c.name AS customer_name,
             COALESCE(job.city_id,'غير محدد') AS city_id,items.product_cost,COALESCE(oc.other_costs,0) AS other_costs,pay.payout AS technician_payout,
             (o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS net_profit
-            ${base} ORDER BY o.paid_at DESC LIMIT 50`, [from, to])
+            ${base} ORDER BY o.paid_at DESC LIMIT 50`, [from, to, tenantId])
         ]);
         return { summary: summary.rows[0], trend: trend.rows, channels: channels.rows, cities: cities.rows, products: products.rows, orders: orders.rows };
       }
