@@ -195,7 +195,7 @@ test('live HTTP manager reads technician inventory custody',async(t)=>{
 });
 
 test('live HTTP technician roster forwards filters and pagination',async(t)=>{
-  const db={query:async(sql,params)=>{assert.match(sql,/on_time_30d/);assert.deepEqual(params,['الرياض','active',5,10]);return{rows:[{id:'tech-1',mobile:'+966500000001',is_active:true,total_count:12}]};}};
+  const db={query:async(sql,params)=>{assert.match(sql,/on_time_30d/);assert.deepEqual(params,[organizationId,'الرياض','active',5,10]);return{rows:[{id:'tech-1',mobile:'+966500000001',is_active:true,total_count:12}]};}};
   const server=createApiServer({db:withSession(db,{role:'dispatcher'})});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/technicians?status=active&q=${encodeURIComponent('الرياض')}&limit=5&offset=10`,{headers:authHeaders});
