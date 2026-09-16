@@ -60,7 +60,7 @@
 - offline technician mode
 - multi-tenant readiness
 
-Multi-tenant readiness starts with an active organization bound to every user and resolved exclusively from the authenticated session. Request headers cannot select or override the tenant. Customer and technician self-service profile resolution is tenant constrained. Customer CRM and technician management reads and mutations are tenant constrained. Remaining jobs, finance, inventory and marketing tables still require tenant partitioning and tenant-scoped unique constraints before hosting another organization.
+Multi-tenant readiness starts with an active organization bound to every user and resolved exclusively from the authenticated session. Request headers cannot select or override the tenant. Customer and technician self-service profile resolution is tenant constrained. Customer CRM, technician management, job operations and manual dispatch reads and mutations are tenant constrained. Remaining finance, inventory and marketing tables still require tenant partitioning and tenant-scoped unique constraints before hosting another organization.
 
 ## Release rule
 No feature reaches production until tested outside the live store and reviewed for migration, rollback, permissions and data safety.
