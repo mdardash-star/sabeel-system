@@ -89,7 +89,7 @@ export async function verifyOtp({ db, mobile: rawMobile, code, hashSecret, now =
 
     await client.query('UPDATE otp_challenges SET consumed_at = $2 WHERE id = $1', [challenge.id, now.toISOString()]);
     let userResult = await client.query(
-      'SELECT id, role, is_active FROM users WHERE mobile = $1 LIMIT 1',
+      'SELECT id, role, is_active, organization_id FROM users WHERE mobile = $1 LIMIT 1',
       [mobile]
     );
     let user = userResult.rows[0];
@@ -99,7 +99,7 @@ export async function verifyOtp({ db, mobile: rawMobile, code, hashSecret, now =
       userResult = await client.query(
         `INSERT INTO users (mobile, role)
          VALUES ($1, 'customer')
-         RETURNING id, role, is_active`,
+         RETURNING id, role, is_active, organization_id`,
         [mobile]
       );
       user = userResult.rows[0];
@@ -124,7 +124,7 @@ export async function verifyOtp({ db, mobile: rawMobile, code, hashSecret, now =
     return {
       token,
       expiresAt: expiresAt.toISOString(),
-      user: { id: user.id, role: user.role }
+      user: { id: user.id, role: user.role, organizationId: user.organization_id }
     };
   });
 
