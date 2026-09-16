@@ -107,6 +107,7 @@ function isPersistentRoute(method, pathname) {
       pathname === '/api/v1/technicians/stats' || pathname === '/api/v1/technicians' ||
       pathname === '/api/v1/settlements/stats' || pathname === '/api/v1/settlements' ||
       pathname === '/api/v1/reports/profitability' ||
+      ['/api/v1/marketing/stats','/api/v1/marketing/segments','/api/v1/marketing/campaigns','/api/v1/marketing/audience-preview'].includes(pathname) ||
       pathname === '/api/v1/inventory/stats' || pathname === '/api/v1/inventory' || pathname === '/api/v1/inventory/movements' ||
       pathname === '/api/v1/purchasing/stats' || pathname === '/api/v1/purchasing/suppliers' || pathname === '/api/v1/purchasing/orders' ||
       /^\/api\/v1\/technicians\/[^/]+\/inventory$/.test(pathname) ||
@@ -123,6 +124,7 @@ function isPersistentRoute(method, pathname) {
       pathname === '/api/v1/jobs/escalations/run' || /^\/api\/v1\/jobs\/[^/]+\/escalations\/resolve$/.test(pathname) ||
       ['/api/v1/inventory/items','/api/v1/inventory/receive','/api/v1/inventory/transfer','/api/v1/inventory/technician-issue'].includes(pathname) ||
       ['/api/v1/purchasing/suppliers','/api/v1/purchasing/orders'].includes(pathname) || /^\/api\/v1\/purchasing\/orders\/[^/]+\/(?:approve|receive)$/.test(pathname) ||
+      ['/api/v1/marketing/segments','/api/v1/marketing/campaigns'].includes(pathname) || /^\/api\/v1\/marketing\/campaigns\/[^/]+\/launch$/.test(pathname) ||
       /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+\/maintenance$/.test(pathname) ||
       /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
       /^\/api\/v1\/settlements\/[^/]+\/(?:approve|reject|paid)$/.test(pathname);
