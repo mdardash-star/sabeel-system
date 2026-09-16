@@ -104,7 +104,7 @@ function isAuthRoute(method, pathname) {
 
 function isPersistentRoute(method, pathname) {
   if (method === 'GET') {
-    return ['/api/v1/customers/me','/api/v1/customers/me/orders','/api/v1/customers/me/assets','/api/v1/customers/me/jobs'].includes(pathname) ||
+    return pathname==='/api/v1/notifications/me' || ['/api/v1/customers/me','/api/v1/customers/me/orders','/api/v1/customers/me/assets','/api/v1/customers/me/jobs'].includes(pathname) ||
       pathname === '/api/v1/maintenance/stats' || pathname === '/api/v1/maintenance/assets' ||
       pathname === '/api/v1/jobs/stats' || pathname === '/api/v1/jobs' ||
       pathname === '/api/v1/jobs/escalations/stats' || pathname === '/api/v1/jobs/escalations' ||
@@ -133,7 +133,7 @@ function isPersistentRoute(method, pathname) {
       pathname === '/api/v1/technicians/me/wallet';
   }
   if (method === 'POST') {
-    return /^\/api\/v1\/customers\/me\/jobs\/[^/]+\/rating$/.test(pathname) || pathname === '/api/v1/customers' || /^\/api\/v1\/customers\/[^/]+\/(?:addresses|assets)$/.test(pathname) ||
+    return ['/api/v1/notifications/subscriptions','/api/v1/notifications/subscriptions/disable'].includes(pathname) || /^\/api\/v1\/customers\/me\/jobs\/[^/]+\/rating$/.test(pathname) || pathname === '/api/v1/customers' || /^\/api\/v1\/customers\/[^/]+\/(?:addresses|assets)$/.test(pathname) ||
       /^\/api\/v1\/jobs\/[^/]+\/(?:assign|reassign)$/.test(pathname) ||
       pathname === '/api/v1/jobs/escalations/run' || /^\/api\/v1\/jobs\/[^/]+\/escalations\/resolve$/.test(pathname) ||
       ['/api/v1/inventory/items','/api/v1/inventory/receive','/api/v1/inventory/transfer','/api/v1/inventory/technician-issue'].includes(pathname) ||
@@ -153,6 +153,7 @@ function isPersistentRoute(method, pathname) {
       /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
       /^\/api\/v1\/settlements\/[^/]+\/(?:approve|reject|paid)$/.test(pathname);
   }
+  if (method === 'PATCH' && pathname === '/api/v1/notifications/me') return true;
   return method === 'PATCH' && (/^\/api\/v1\/ai\/finance\/anomalies\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/marketing\/recommendations\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/sales\/opportunities\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/insights\/[^/]+$/.test(pathname) || /^\/api\/v1\/conversations\/[^/]+$/.test(pathname) || /^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/technicians\/[^/]+\/status$/.test(pathname) ||
