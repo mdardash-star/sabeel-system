@@ -154,6 +154,14 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200, { stats });
   }
 
+  if (method === 'GET' && url === '/api/v1/reports/profitability') {
+    if (!can(role, 'reports:finance')) return response(403, { error: 'forbidden' });
+    const range = parseDateRange(context.from, context.to);
+    if (!range) return response(400, { error: 'invalid_date_range' });
+    const report = await createRepositories(db).reports.profitability(range.from, range.to);
+    return response(200, { ...report, range });
+  }
+
   if (method === 'GET' && url === '/api/v1/settlements') {
     if (!can(role, 'settlements:read')) return response(403, { error: 'forbidden' });
     const pagination = parsePagination(context);
