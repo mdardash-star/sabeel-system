@@ -16,9 +16,17 @@ import { createDispatchRecommendation, reviewDispatchRecommendation } from '../a
 import { scanSalesOpportunities, updateSalesOpportunity } from '../ai/sales.mjs';
 import { scanMarketingRecommendations, updateMarketingRecommendation } from '../ai/marketing.mjs';
 import { scanFinanceAnomalies, updateFinanceAnomaly } from '../ai/finance.mjs';
+import { rateCustomerJob } from '../crm/customer-portal.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
+
+  if(method==='GET'&&url==='/api/v1/customers/me'){const identity=await resolveCustomer({role,context,db});if(identity.error)return identity.error;return response(200,{customer:identity.customer});}
+  if(method==='GET'&&url==='/api/v1/customers/me/orders'){const identity=await resolveCustomer({role,context,db});if(identity.error)return identity.error;const pagination=parsePagination(context);if(!pagination)return response(400,{error:'invalid_pagination'});const rows=await identity.repos.customers.listOrders(identity.customer.id,pagination);return response(200,{orders:rows.map(({total_count,...x})=>x),pagination:{...pagination,total:rows[0]?.total_count||0}});}
+  if(method==='GET'&&url==='/api/v1/customers/me/assets'){const identity=await resolveCustomer({role,context,db});if(identity.error)return identity.error;const pagination=parsePagination(context);if(!pagination)return response(400,{error:'invalid_pagination'});const rows=await identity.repos.customers.listAssets(identity.customer.id,pagination);return response(200,{assets:rows.map(({total_count,...x})=>x),pagination:{...pagination,total:rows[0]?.total_count||0}});}
+  if(method==='GET'&&url==='/api/v1/customers/me/jobs'){const identity=await resolveCustomer({role,context,db});if(identity.error)return identity.error;const pagination=parsePagination(context);if(!pagination)return response(400,{error:'invalid_pagination'});const rows=await identity.repos.customers.listServiceJobs(identity.customer.id,pagination);return response(200,{jobs:rows.map(({total_count,...x})=>x),pagination:{...pagination,total:rows[0]?.total_count||0}});}
+  const customerRatingMatch=url.match(/^\/api\/v1\/customers\/me\/jobs\/([^/]+)\/rating$/);
+  if(method==='POST'&&customerRatingMatch){const identity=await resolveCustomer({role,context,db});if(identity.error)return identity.error;const score=Number(body.score),comment=cleanLongText(body.comment,1000);if(!Number.isInteger(score)||score<1||score>5)return response(400,{error:'invalid_rating'});try{const rating=await rateCustomerJob(db,{jobId:customerRatingMatch[1],customerId:identity.customer.id,actorUserId:context.userId,score,comment});return rating?response(201,{rating}):response(404,{error:'job_not_found'});}catch(error){if(error.message==='Service not completed')return response(409,{error:'service_not_completed'});if(error.message==='Rating already exists')return response(409,{error:'rating_already_exists'});if(error.message==='Technician missing')return response(409,{error:'technician_missing'});throw error;}}
 
   if (method === 'GET' && url === '/api/v1/customers/stats') {
     if (!can(role, 'customers:read')) return response(403, { error: 'forbidden' });
@@ -841,6 +849,14 @@ async function resolveTechnician({ role, context, db }) {
   const technician = await repos.technicians.findActiveByUserId(context.userId);
   if (!technician) return { error: response(403, { error: 'active_technician_required' }) };
   return { repos, technician };
+}
+
+async function resolveCustomer({role,context,db}){
+  if(role!=='customer'||!can(role,'customer:self:read'))return{error:response(403,{error:'forbidden'})};
+  if(!context.userId)return{error:response(401,{error:'user_identity_required'})};
+  const repos=createRepositories(db),customer=await repos.customers.findByUserId(context.userId);
+  if(!customer)return{error:response(403,{error:'customer_profile_required'})};
+  return{repos,customer};
 }
 
 function startOfUtcDay(date) {
