@@ -17,9 +17,15 @@ import { scanSalesOpportunities, updateSalesOpportunity } from '../ai/sales.mjs'
 import { scanMarketingRecommendations, updateMarketingRecommendation } from '../ai/marketing.mjs';
 import { scanFinanceAnomalies, updateFinanceAnomaly } from '../ai/finance.mjs';
 import { rateCustomerJob } from '../crm/customer-portal.mjs';
+import { disablePushSubscription, getNotificationSettings, savePushSubscription, updateNotificationSettings } from '../notifications/push.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
+
+  if(method==='GET'&&url==='/api/v1/notifications/me'){if(!context.userId||!['customer','technician'].includes(role))return response(403,{error:'forbidden'});return response(200,await getNotificationSettings(db,context.userId));}
+  if(method==='POST'&&url==='/api/v1/notifications/subscriptions'){if(!context.userId||!['customer','technician'].includes(role))return response(403,{error:'forbidden'});const endpoint=cleanLongText(body.endpoint,2000),p256dh=cleanLongText(body.keys?.p256dh,500),auth=cleanLongText(body.keys?.auth,500);if(!endpoint.startsWith('https://')||!p256dh||!auth)return response(400,{error:'invalid_push_subscription'});return response(201,{subscription:await savePushSubscription(db,{userId:context.userId,endpoint,p256dh,auth,userAgent:cleanLongText(body.userAgent,500)})});}
+  if(method==='POST'&&url==='/api/v1/notifications/subscriptions/disable'){if(!context.userId||!['customer','technician'].includes(role))return response(403,{error:'forbidden'});const endpoint=cleanLongText(body.endpoint,2000);if(!endpoint)return response(400,{error:'endpoint_required'});const subscription=await disablePushSubscription(db,{userId:context.userId,endpoint});return subscription?response(200,{subscription}):response(404,{error:'subscription_not_found'});}
+  if(method==='PATCH'&&url==='/api/v1/notifications/me'){if(!context.userId||!['customer','technician'].includes(role))return response(403,{error:'forbidden'});if(typeof body.serviceUpdates!=='boolean'||typeof body.maintenanceReminders!=='boolean'||typeof body.marketing!=='boolean')return response(400,{error:'invalid_notification_preferences'});return response(200,{preferences:await updateNotificationSettings(db,{userId:context.userId,...body})});}
 
   if(method==='GET'&&url==='/api/v1/customers/me'){const identity=await resolveCustomer({role,context,db});if(identity.error)return identity.error;return response(200,{customer:identity.customer});}
   if(method==='GET'&&url==='/api/v1/customers/me/orders'){const identity=await resolveCustomer({role,context,db});if(identity.error)return identity.error;const pagination=parsePagination(context);if(!pagination)return response(400,{error:'invalid_pagination'});const rows=await identity.repos.customers.listOrders(identity.customer.id,pagination);return response(200,{orders:rows.map(({total_count,...x})=>x),pagination:{...pagination,total:rows[0]?.total_count||0}});}
