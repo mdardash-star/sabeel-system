@@ -6,8 +6,10 @@
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev:admin": "npm run dev --workspace @subil/admin",
-    "build": "npm run build:admin",
+    "dev:technician": "npm run dev --workspace @subil/technician",
+    "build": "npm run build:admin && npm run build:technician",
     "build:admin": "npm run build --workspace @subil/admin",
+    "build:technician": "npm run build --workspace @subil/technician",
     "typecheck": "tsc --noEmit",
     "test": "node --test"
   },
