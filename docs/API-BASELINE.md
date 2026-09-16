@@ -94,6 +94,15 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - POST `/inventory/transfer` — atomically moves stock between different active warehouses without allowing a negative balance
 - POST `/inventory/technician-issue` — atomically deducts warehouse stock and credits the active technician's custody
 
+## Purchasing
+- GET `/purchasing/stats` — open, approval, receipt, overdue and value counters
+- GET `/purchasing/suppliers?q=&limit=20&offset=0` — active suppliers with order count and spend
+- POST `/purchasing/suppliers` — creates a supplier with an audit record
+- GET `/purchasing/orders?status=all|draft|approved|partially_received|received|cancelled|overdue&q=&limit=20&offset=0` — searchable orders with receipt progress and line details
+- POST `/purchasing/orders` — creates a costed multi-line draft purchase order
+- POST `/purchasing/orders/:id/approve` — approves a draft order
+- POST `/purchasing/orders/:id/receive` — atomically records partial or complete receipt, updates item cost and warehouse balance, and prevents over-receipt
+
 ## Notifications
 - POST `/notifications/events`
 - GET `/notifications/deliveries/:id`
