@@ -258,11 +258,12 @@ function validateEvidence(jobId, evidence) {
   return evidence;
 }
 
-export async function approveSettlementAndCreditWallet(db, { settlementId, approverUserId }) {
+export async function approveSettlementAndCreditWallet(db, { settlementId, approverUserId, tenantId = null }) {
   return withTransaction(db, async (client) => {
     const locked = await client.query(
-      `SELECT * FROM technician_settlements WHERE id = $1 FOR UPDATE`,
-      [settlementId]
+      `SELECT s.* FROM technician_settlements s JOIN service_jobs j ON j.id=s.job_id
+       WHERE s.id = $1 AND ($2::uuid IS NULL OR j.organization_id=$2) FOR UPDATE`,
+      [settlementId, tenantId]
     );
     const settlement = locked.rows[0];
     if (!settlement) throw new Error('Settlement not found');
@@ -303,11 +304,12 @@ export async function approveSettlementAndCreditWallet(db, { settlementId, appro
   });
 }
 
-export async function rejectSettlement(db, { settlementId, reason, actorUserId }) {
+export async function rejectSettlement(db, { settlementId, reason, actorUserId, tenantId = null }) {
   return withTransaction(db, async (client) => {
     const locked = await client.query(
-      `SELECT id, technician_id, payout_amount, status FROM technician_settlements WHERE id = $1 FOR UPDATE`,
-      [settlementId]
+      `SELECT s.id, s.technician_id, s.payout_amount, s.status FROM technician_settlements s
+       JOIN service_jobs j ON j.id=s.job_id WHERE s.id = $1 AND ($2::uuid IS NULL OR j.organization_id=$2) FOR UPDATE`,
+      [settlementId, tenantId]
     );
     const settlement = locked.rows[0];
     if (!settlement) return null;
@@ -325,11 +327,12 @@ export async function rejectSettlement(db, { settlementId, reason, actorUserId }
   });
 }
 
-export async function markSettlementPaid(db, { settlementId, actorUserId, paymentReference }) {
+export async function markSettlementPaid(db, { settlementId, actorUserId, paymentReference, tenantId = null }) {
   return withTransaction(db, async (client) => {
     const locked = await client.query(
-      `SELECT id, technician_id, payout_amount, status FROM technician_settlements WHERE id = $1 FOR UPDATE`,
-      [settlementId]
+      `SELECT s.id, s.technician_id, s.payout_amount, s.status FROM technician_settlements s
+       JOIN service_jobs j ON j.id=s.job_id WHERE s.id = $1 AND ($2::uuid IS NULL OR j.organization_id=$2) FOR UPDATE`,
+      [settlementId, tenantId]
     );
     const settlement = locked.rows[0];
     if (!settlement) return null;
