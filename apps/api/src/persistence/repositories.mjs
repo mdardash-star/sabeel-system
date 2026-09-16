@@ -565,6 +565,41 @@ export function createRepositories(db) {
       }
     },
 
+    marketing: {
+      async stats() {
+        const { rows } = await db.query(
+          `SELECT COUNT(*)::integer AS total,
+            COUNT(*) FILTER (WHERE status='draft')::integer AS drafts,
+            COUNT(*) FILTER (WHERE status='scheduled')::integer AS scheduled,
+            COUNT(*) FILTER (WHERE status='queued')::integer AS queued,
+            COALESCE(SUM(recipients.total),0)::integer AS total_recipients,
+            COALESCE(SUM(recipients.sent),0)::integer AS sent
+           FROM marketing_campaigns mc LEFT JOIN LATERAL (
+             SELECT COUNT(*)::integer AS total,COUNT(*) FILTER (WHERE status='sent')::integer AS sent
+             FROM campaign_recipients WHERE campaign_id=mc.id
+           ) recipients ON true`
+        ); return rows[0];
+      },
+      async segments() {
+        const { rows } = await db.query(
+          `SELECT cs.*,COUNT(mc.id)::integer AS campaign_count FROM customer_segments cs
+           LEFT JOIN marketing_campaigns mc ON mc.segment_id=cs.id WHERE cs.is_active
+           GROUP BY cs.id ORDER BY cs.created_at DESC`
+        ); return rows;
+      },
+      async campaigns({ status='all', limit=20, offset=0 }={}) {
+        const { rows } = await db.query(
+          `SELECT mc.*,cs.name AS segment_name,cs.segment_type,
+            COALESCE(r.total,0)::integer AS recipient_count,COALESCE(r.sent,0)::integer AS sent_count,
+            COALESCE(r.failed,0)::integer AS failed_count,COUNT(*) OVER()::integer AS total_count
+           FROM marketing_campaigns mc JOIN customer_segments cs ON cs.id=mc.segment_id
+           LEFT JOIN LATERAL (SELECT COUNT(*) AS total,COUNT(*) FILTER(WHERE status='sent') AS sent,
+             COUNT(*) FILTER(WHERE status='failed') AS failed FROM campaign_recipients WHERE campaign_id=mc.id) r ON true
+           WHERE ($1='all' OR mc.status=$1) ORDER BY mc.created_at DESC LIMIT $2 OFFSET $3`,[status,limit,offset]
+        ); return rows;
+      }
+    },
+
     reports: {
       async profitability(from, to) {
         const base = `FROM orders o JOIN customers c ON c.id = o.customer_id
