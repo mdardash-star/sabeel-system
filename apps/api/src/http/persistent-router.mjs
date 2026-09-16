@@ -3,6 +3,7 @@ import { createRepositories } from '../persistence/repositories.mjs';
 import { approveSettlementAndCreditWallet, completeAssetMaintenance, completeTechnicianJob, markSettlementPaid, rejectSettlement, setTechnicianActive, transitionTechnicianJob, updateAssetStatus } from '../persistence/transactions.mjs';
 import { assignPersistentJob, listDispatchCandidates, reassignPersistentJob } from '../dispatch/persistent-dispatch.mjs';
 import { detectJobEscalations, resolveJobEscalations } from '../jobs/escalations.mjs';
+import { createInventoryItem, issueInventoryToTechnician, receiveInventory, transferInventory } from '../inventory/operations.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
@@ -165,6 +166,85 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       settlements: rows.map(({ total_count, ...settlement }) => settlement),
       pagination: { ...pagination, total: rows[0]?.total_count || 0 }, status
     });
+  }
+
+  if (method === 'GET' && url === '/api/v1/inventory/stats') {
+    if (!can(role, 'inventory:read')) return response(403, { error: 'forbidden' });
+    const stats = await createRepositories(db).inventory.stats();
+    return response(200, { stats });
+  }
+
+  if (method === 'GET' && url === '/api/v1/inventory') {
+    if (!can(role, 'inventory:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const status = context.status || 'all';
+    if (!['all', 'low', 'out'].includes(status)) return response(400, { error: 'invalid_inventory_status_filter' });
+    const rows = await createRepositories(db).inventory.list({ ...pagination, status, query: context.query || '' });
+    return response(200, {
+      items: rows.map(({ total_count, ...item }) => item),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 }, status
+    });
+  }
+
+  if (method === 'GET' && url === '/api/v1/inventory/movements') {
+    if (!can(role, 'inventory:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const rows = await createRepositories(db).inventory.movements(pagination);
+    return response(200, {
+      movements: rows.map(({ total_count, ...movement }) => movement),
+      pagination: { ...pagination, total: rows[0]?.total_count || 0 }
+    });
+  }
+
+  const technicianInventoryMatch = url.match(/^\/api\/v1\/technicians\/([^/]+)\/inventory$/);
+  if (method === 'GET' && technicianInventoryMatch) {
+    if (!can(role, 'inventory:read')) return response(403, { error: 'forbidden' });
+    const stock = await createRepositories(db).inventory.technicianStock(technicianInventoryMatch[1]);
+    return response(200, { technicianId: technicianInventoryMatch[1], stock });
+  }
+
+  if (method === 'POST' && url === '/api/v1/inventory/items') {
+    if (!can(role, 'inventory:update')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    const sku = cleanOptional(body.sku).toUpperCase(), name = cleanOptional(body.name), unit = cleanOptional(body.unit) || 'piece';
+    const reorderLevel = Number(body.reorderLevel ?? 0), unitCost = Number(body.unitCost ?? 0);
+    if (sku.length < 2 || sku.length > 80 || name.length < 2 || name.length > 200 || unit.length > 40 ||
+        !validInventoryNumber(reorderLevel, true) || !validInventoryNumber(unitCost, true)) return response(400, { error: 'invalid_inventory_item' });
+    try {
+      const item = await createInventoryItem(db, { sku, name, unit, reorderLevel, unitCost, actorUserId: context.userId });
+      return response(201, { item });
+    } catch (error) {
+      if (error.code === '23505') return response(409, { error: 'inventory_sku_exists' });
+      throw error;
+    }
+  }
+
+  if (method === 'POST' && ['/api/v1/inventory/receive','/api/v1/inventory/transfer','/api/v1/inventory/technician-issue'].includes(url)) {
+    if (!can(role, 'inventory:update')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    const itemId = cleanOptional(body.itemId), quantity = Number(body.quantity), reference = cleanOptional(body.reference), notes = cleanOptional(body.notes);
+    if (!itemId || !validInventoryNumber(quantity, false) || reference.length > 200 || notes.length > 500) return response(400, { error: 'invalid_inventory_movement' });
+    try {
+      if (url.endsWith('/receive')) {
+        const warehouseId = cleanOptional(body.warehouseId), unitCost = body.unitCost === undefined || body.unitCost === '' ? null : Number(body.unitCost);
+        if (!warehouseId || (unitCost !== null && !validInventoryNumber(unitCost, true))) return response(400, { error: 'invalid_inventory_movement' });
+        return response(201, await receiveInventory(db, { warehouseId, itemId, quantity, unitCost, reference, notes, actorUserId: context.userId }));
+      }
+      if (url.endsWith('/transfer')) {
+        const fromWarehouseId = cleanOptional(body.fromWarehouseId), toWarehouseId = cleanOptional(body.toWarehouseId);
+        if (!fromWarehouseId || !toWarehouseId) return response(400, { error: 'invalid_inventory_movement' });
+        return response(201, await transferInventory(db, { fromWarehouseId, toWarehouseId, itemId, quantity, reference, notes, actorUserId: context.userId }));
+      }
+      const warehouseId = cleanOptional(body.warehouseId), technicianId = cleanOptional(body.technicianId);
+      if (!warehouseId || !technicianId) return response(400, { error: 'invalid_inventory_movement' });
+      return response(201, await issueInventoryToTechnician(db, { warehouseId, technicianId, itemId, quantity, reference, notes, actorUserId: context.userId }));
+    } catch (error) {
+      if (error.message.includes('not found')) return response(404, { error: 'inventory_target_not_found' });
+      if (error.message.includes('Insufficient') || error.message.includes('different')) return response(409, { error: 'inventory_movement_conflict', message: error.message });
+      throw error;
+    }
   }
 
   const technicianPerformanceMatch = url.match(/^\/api\/v1\/technicians\/([^/]+)\/performance$/);
@@ -558,6 +638,10 @@ function parseDateRange(fromValue, toValue) {
   const maximumRange = 366 * 86400000;
   if (new Date(to).getTime() - new Date(from).getTime() > maximumRange) return null;
   return { from, to };
+}
+
+function validInventoryNumber(value, allowZero) {
+  return Number.isFinite(value) && (allowZero ? value >= 0 : value > 0) && value <= 1_000_000;
 }
 
 function addUtcMonths(iso, months) {
