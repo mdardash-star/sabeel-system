@@ -13,6 +13,7 @@
     "build:admin": "npm run build --workspace @subil/admin",
     "build:technician": "npm run build --workspace @subil/technician",
     "build:mobile": "npm run build --workspace @subil/mobile",
+    "smoke": "node scripts/smoke-check.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --test"
   },
