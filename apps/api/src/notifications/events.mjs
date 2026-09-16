@@ -12,7 +12,7 @@ export function notificationForJobStatus(job, status) {
     type,
     customerId: job.customerId,
     jobId: job.id,
-    channels: ['whatsapp', 'sms'],
+    channels: ['push', 'whatsapp', 'sms'],
     data: {
       scheduledAt: job.scheduledAt || null,
       ratingRequested: status === 'completed'
