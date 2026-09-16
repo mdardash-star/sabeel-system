@@ -60,5 +60,7 @@
 - offline technician mode
 - multi-tenant readiness
 
+Multi-tenant readiness starts with an active organization bound to every user and resolved exclusively from the authenticated session. Request headers cannot select or override the tenant. Domain-table partitioning and tenant-scoped unique constraints remain a separate migration gate before hosting another organization.
+
 ## Release rule
 No feature reaches production until tested outside the live store and reviewed for migration, rollback, permissions and data safety.
