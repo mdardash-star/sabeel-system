@@ -1,0 +1,50 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+
+type Job = { id:string; status:string; scheduled_at?:string; customer_name?:string; address_text?:string; city_name?:string; service_type?:string; external_order_id?:string; notes?:string };
+type WalletEntry = { id:string; amount:string|number; status:string; created_at?:string; settlement_id?:string };
+const apiBase = process.env.NEXT_PUBLIC_SUBIL_API_URL?.replace(/\/$/, "") || "";
+const statusLabel:Record<string,string> = { scheduled:"مجدولة", en_route:"في الطريق", arrived:"تم الوصول", in_progress:"جاري التنفيذ", completed:"مكتملة", cancelled:"ملغاة" };
+const nextStatus:Record<string,string> = { scheduled:"en_route", en_route:"arrived", arrived:"in_progress" };
+const nextLabel:Record<string,string> = { scheduled:"بدء التوجه", en_route:"تأكيد الوصول", arrived:"بدء العمل" };
+const demoJobs:Job[] = [
+  {id:"job-1048",status:"scheduled",scheduled_at:new Date().toISOString(),customer_name:"عميل سبيل",address_text:"حي الملقا، الرياض",city_name:"الرياض",service_type:"تركيب جهاز 7 مراحل",external_order_id:"1048"},
+  {id:"job-1042",status:"in_progress",scheduled_at:new Date(Date.now()-3600000).toISOString(),customer_name:"عميل صيانة",address_text:"حي الياسمين، الرياض",city_name:"الرياض",service_type:"صيانة دورية",external_order_id:"1042"}
+];
+
+function token(){ return typeof window === "undefined" ? "" : sessionStorage.getItem("subil_technician_session") || ""; }
+function money(value:string|number){ return Number(value||0).toLocaleString("ar-SA",{style:"currency",currency:"SAR"}); }
+function when(value?:string){ return value ? new Intl.DateTimeFormat("ar-SA",{hour:"numeric",minute:"2-digit",weekday:"short"}).format(new Date(value)) : "غير محدد"; }
+
+export default function TechnicianHome(){
+  const router=useRouter(); const[tab,setTab]=useState<"jobs"|"wallet"|"profile">("jobs");
+  const[jobs,setJobs]=useState<Job[]>([]); const[wallet,setWallet]=useState<{balance:number;entries:WalletEntry[]}>({balance:0,entries:[]});
+  const[selected,setSelected]=useState<Job|null>(null); const[evidence,setEvidence]=useState(""); const[loading,setLoading]=useState(true); const[busy,setBusy]=useState(false); const[error,setError]=useState(""); const[online,setOnline]=useState(true);
+  const load=useCallback(async()=>{
+    const session=token(); if(!session){router.replace("/login");return;}
+    if(!apiBase){setJobs(demoJobs);setWallet({balance:860,entries:[{id:"w1",amount:180,status:"available",created_at:new Date().toISOString()},{id:"w2",amount:120,status:"pending",created_at:new Date(Date.now()-86400000).toISOString()}]});setLoading(false);return;}
+    try{const headers={Authorization:`Bearer ${session}`};const[j,w]=await Promise.all([fetch(`${apiBase}/api/v1/technicians/me/jobs`,{headers}),fetch(`${apiBase}/api/v1/technicians/me/wallet?limit=20`,{headers})]);if(j.status===401||w.status===401){sessionStorage.removeItem("subil_technician_session");router.replace("/login");return;}if(!j.ok||!w.ok)throw new Error();const[jp,wp]=await Promise.all([j.json(),w.json()]);setJobs(jp.jobs||[]);setWallet({balance:Number(wp.balance||0),entries:wp.entries||[]});}
+    catch{setError("تعذر تحديث البيانات. ستظهر آخر بيانات متاحة عند عودة الاتصال.");}finally{setLoading(false);}
+  },[router]);
+  useEffect(()=>{load();setOnline(navigator.onLine);const on=()=>setOnline(true),off=()=>setOnline(false);window.addEventListener("online",on);window.addEventListener("offline",off);if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});return()=>{window.removeEventListener("online",on);window.removeEventListener("offline",off);};},[load]);
+  const counts=useMemo(()=>({all:jobs.length,active:jobs.filter(j=>["en_route","arrived","in_progress"].includes(j.status)).length,done:jobs.filter(j=>j.status==="completed").length}),[jobs]);
+  async function advance(job:Job){const target=nextStatus[job.status];if(!target)return;setBusy(true);setError("");try{if(apiBase){const r=await fetch(`${apiBase}/api/v1/technicians/me/jobs/${job.id}/status`,{method:"PATCH",headers:{Authorization:`Bearer ${token()}`,"content-type":"application/json"},body:JSON.stringify({status:target})});if(!r.ok)throw new Error();}const updated={...job,status:target};setJobs(v=>v.map(x=>x.id===job.id?updated:x));setSelected(updated);}catch{setError("تعذر تحديث حالة المهمة.");}finally{setBusy(false);}}
+  async function complete(job:Job){if(evidence.trim().length<3){setError("أضف مرجع صورة إثبات الإنجاز أولًا.");return;}setBusy(true);setError("");try{if(apiBase){const r=await fetch(`${apiBase}/api/v1/technicians/me/jobs/${job.id}/complete`,{method:"POST",headers:{Authorization:`Bearer ${token()}`,"content-type":"application/json"},body:JSON.stringify({evidence:[{mediaType:"image",storageKey:evidence.trim()}]})});if(!r.ok)throw new Error();}setJobs(v=>v.map(x=>x.id===job.id?{...x,status:"completed"}:x));setSelected(null);setEvidence("");}catch{setError("تعذر إغلاق المهمة. تحقق من الإثبات وحالة المهمة.");}finally{setBusy(false);}}
+  async function logout(){if(apiBase)await fetch(`${apiBase}/api/v1/auth/logout`,{method:"POST",headers:{Authorization:`Bearer ${token()}`}}).catch(()=>{});sessionStorage.removeItem("subil_technician_session");router.replace("/login");}
+  if(loading)return <main className="splash"><div className="splash-logo">S</div><p>جاري تحميل مهامك…</p></main>;
+  return <main className="app-shell">
+    <header className="topbar"><div className="logo compact"><span>S</span><div><strong>سبيل</strong><small>بوابة الفني</small></div></div><div className={`connection ${online?"on":"off"}`}><i/>{online?"متصل":"دون اتصال"}</div></header>
+    <section className="content">
+      {error&&<div className="alert">{error}<button onClick={()=>setError("")}>×</button></div>}
+      {tab==="jobs"&&<><div className="welcome"><div><small>يوم عمل موفق</small><h1>مهامي اليوم</h1></div><button onClick={load} aria-label="تحديث">↻</button></div>
+        <div className="summary"><article><span>المهام</span><b>{counts.all}</b></article><article><span>نشطة</span><b>{counts.active}</b></article><article><span>مكتملة</span><b>{counts.done}</b></article></div>
+        <div className="job-list">{jobs.length?jobs.map(job=><button className="job-card" key={job.id} onClick={()=>setSelected(job)}><div className="job-time"><b>{when(job.scheduled_at)}</b><span className={`status ${job.status}`}>{statusLabel[job.status]||job.status}</span></div><h2>{job.service_type||"خدمة ميدانية"}</h2><p>طلب #{job.external_order_id||job.id.slice(0,8)}</p><div className="job-address"><i>⌖</i><span>{job.address_text||job.city_name||"الموقع غير محدد"}</span></div><footer><span>عرض التفاصيل</span><b>‹</b></footer></button>):<div className="empty"><b>لا توجد مهام اليوم</b><p>ستظهر المهام هنا فور جدولتها لك.</p></div>}</div></>}
+      {tab==="wallet"&&<><div className="welcome"><div><small>المستحقات المعتمدة</small><h1>محفظتي</h1></div></div><section className="wallet-card"><span>الرصيد المتاح</span><strong>{money(wallet.balance)}</strong><small>يُحوّل بعد اعتماد المالية</small></section><h2 className="section-title">آخر الحركات</h2><div className="ledger">{wallet.entries.length?wallet.entries.map(x=><article key={x.id}><div><b>مستحق مهمة</b><small>{x.created_at?new Date(x.created_at).toLocaleDateString("ar-SA"):""}</small></div><strong>{money(x.amount)}</strong><span className={x.status}>{x.status==="available"?"متاح":x.status==="paid"?"مدفوع":"قيد الاعتماد"}</span></article>):<div className="empty"><b>لا توجد حركات مالية</b></div>}</div></>}
+      {tab==="profile"&&<><div className="profile-head"><div>S</div><h1>حساب الفني</h1><p>الوصول مقتصر على مهامك ومستحقاتك فقط</p></div><section className="profile-actions"><article><span>الحماية والخصوصية</span><b>بيانات العميل الحساسة محجوبة</b></article><article><span>دعم العمليات</span><b>تواصل مع مشرف التشغيل عند التعثر</b></article><button onClick={logout}>تسجيل الخروج</button></section></>}
+    </section>
+    <nav className="bottom-nav"><button className={tab==="jobs"?"active":""} onClick={()=>setTab("jobs")}><i>▣</i><span>المهام</span></button><button className={tab==="wallet"?"active":""} onClick={()=>setTab("wallet")}><i>◫</i><span>المحفظة</span></button><button className={tab==="profile"?"active":""} onClick={()=>setTab("profile")}><i>●</i><span>حسابي</span></button></nav>
+    {selected&&<div className="sheet-backdrop" onClick={()=>setSelected(null)}><section className="job-sheet" onClick={e=>e.stopPropagation()}><div className="sheet-handle"/><header><div><small>طلب #{selected.external_order_id||selected.id.slice(0,8)}</small><h2>{selected.service_type||"خدمة ميدانية"}</h2></div><button onClick={()=>setSelected(null)}>×</button></header><div className="detail"><span>الحالة</span><b className={`status ${selected.status}`}>{statusLabel[selected.status]||selected.status}</b></div><div className="detail"><span>الموعد</span><b>{when(selected.scheduled_at)}</b></div><div className="location"><small>موقع الخدمة</small><b>{selected.address_text||selected.city_name||"غير محدد"}</b>{selected.address_text&&<a href={`https://maps.google.com/?q=${encodeURIComponent(selected.address_text)}`} target="_blank" rel="noreferrer">فتح الخرائط</a>}</div>{selected.notes&&<div className="notes">{selected.notes}</div>}{nextStatus[selected.status]&&<button className="main-action" disabled={busy||!online} onClick={()=>advance(selected)}>{busy?"جارٍ الحفظ…":nextLabel[selected.status]}</button>}{selected.status==="in_progress"&&<div className="completion"><label>مرجع صورة إثبات الإنجاز<input value={evidence} onChange={e=>setEvidence(e.target.value)} placeholder={`jobs/${selected.id}/after.jpg`}/></label><button className="main-action success" disabled={busy||!online} onClick={()=>complete(selected)}>{busy?"جارٍ الإغلاق…":"إنهاء المهمة وإرسالها للمالية"}</button></div>}{!online&&<p className="offline-note">تحديث الحالة متاح بعد عودة الاتصال.</p>}</section></div>}
+  </main>;
+}
