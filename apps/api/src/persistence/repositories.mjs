@@ -625,6 +625,26 @@ export function createRepositories(db) {
           AND($3::timestamptz IS NULL OR COALESCE(mc.scheduled_at,mc.created_at)>=$3)AND($4::timestamptz IS NULL OR COALESCE(mc.scheduled_at,mc.created_at)<$4)
           ORDER BY COALESCE(mc.scheduled_at,mc.created_at) DESC LIMIT $5 OFFSET $6`,[status,channel,from,to,limit,offset]);return rows;
       },
+      async conversationStats() {
+        const {rows}=await db.query(`SELECT COUNT(*) FILTER(WHERE status<>'closed')::integer AS active,
+          COUNT(*) FILTER(WHERE status='pending_agent')::integer AS pending_agent,
+          COUNT(*) FILTER(WHERE status='waiting_customer')::integer AS waiting_customer,
+          COUNT(*) FILTER(WHERE priority IN('high','urgent')AND status<>'closed')::integer AS priority,
+          COALESCE(SUM(unread_count),0)::integer AS unread FROM customer_conversations`);return rows[0];
+      },
+      async conversations({status='active',channel='all',query='',limit=20,offset=0}={}) {
+        const {rows}=await db.query(`SELECT cc.*,c.name AS customer_name,u.mobile AS assigned_mobile,
+          last_message.body AS last_message,last_message.direction AS last_direction,COUNT(*)OVER()::integer AS total_count
+          FROM customer_conversations cc LEFT JOIN customers c ON c.id=cc.customer_id LEFT JOIN users u ON u.id=cc.assigned_to
+          LEFT JOIN LATERAL(SELECT body,direction FROM conversation_messages WHERE conversation_id=cc.id ORDER BY sent_at DESC,id DESC LIMIT 1)last_message ON true
+          WHERE CASE $1 WHEN 'active'THEN cc.status<>'closed' WHEN 'all'THEN true ELSE cc.status=$1 END
+          AND($2='all'OR cc.channel=$2)AND($3=''OR COALESCE(c.name,'')ILIKE '%'||$3||'%'OR cc.contact_handle ILIKE '%'||$3||'%'OR cc.subject ILIKE '%'||$3||'%')
+          ORDER BY CASE cc.priority WHEN 'urgent'THEN 0 WHEN 'high'THEN 1 WHEN 'normal'THEN 2 ELSE 3 END,cc.last_message_at DESC LIMIT $4 OFFSET $5`,[status,channel,query,limit,offset]);return rows;
+      },
+      async conversationThread(id) {
+        const conversation=(await db.query(`SELECT cc.*,c.name AS customer_name,c.mobile AS customer_mobile,u.mobile AS assigned_mobile FROM customer_conversations cc LEFT JOIN customers c ON c.id=cc.customer_id LEFT JOIN users u ON u.id=cc.assigned_to WHERE cc.id=$1`,[id])).rows[0];
+        if(!conversation)return null;const messages=(await db.query(`SELECT cm.*,u.mobile AS agent_mobile FROM conversation_messages cm LEFT JOIN users u ON u.id=cm.sent_by WHERE cm.conversation_id=$1 ORDER BY cm.sent_at ASC,cm.id ASC`,[id])).rows;return{conversation,messages};
+      },
       async attribution(from,to) {
         const [summary,channels,campaigns,recent]=await Promise.all([
           db.query(`SELECT COUNT(o.id)::integer AS paid_orders,COUNT(oa.order_id)::integer AS attributed_orders,
