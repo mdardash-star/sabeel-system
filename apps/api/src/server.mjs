@@ -4,6 +4,7 @@ import { routeRequest } from './http/router.mjs';
 import { routePersistentRequest } from './http/persistent-router.mjs';
 import { createDatabase } from './persistence/database.mjs';
 import { authenticateBearer } from './auth/session-auth.mjs';
+import { tenantContext } from './auth/tenant-context.mjs';
 import { routeAuthRequest } from './http/auth-router.mjs';
 import { createOtpSender } from './integrations/otp-sender.mjs';
 
@@ -33,14 +34,17 @@ export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } 
       const persistent = isPersistentRoute(req.method, requestUrl.pathname);
       let role = req.headers['x-subil-role'] || 'anonymous';
       let userId = req.headers['x-subil-user-id'] || null;
+      let contextTenant = {};
       if (persistent) {
         const session = await authenticateBearer(db, req.headers.authorization);
         if (!session) return sendJson(res, 401, { error: 'invalid_or_expired_session' });
         role = session.role;
         userId = session.user_id;
+        contextTenant = tenantContext(session);
       }
       const context = {
         userId,
+        ...contextTenant,
         from: requestUrl.searchParams.get('from') || undefined,
         to: requestUrl.searchParams.get('to') || undefined,
         limit: requestUrl.searchParams.get('limit') || undefined,
