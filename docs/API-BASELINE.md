@@ -144,6 +144,9 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - POST `/ai/suggestions/:id/use` — sends only an approved draft through the existing queued conversation delivery path
 - GET/POST `/ai/knowledge` — approved operational knowledge used to ground reply suggestions
 - AI never sends autonomously. High-risk topics such as pricing, refunds, warranties and complaints are explicitly flagged for human review.
+- GET `/ai/insights/stats`, `/ai/insights` and `/ai/brief` — prioritized operational exceptions and the latest executive daily brief
+- POST `/ai/insights/run` — idempotent daily scan across overdue jobs, escalations, low stock, settlements, abandoned carts, campaigns and customer conversations
+- PATCH `/ai/insights/:id` — acknowledges, resolves or dismisses an open insight with a mandatory resolution note when resolved
 
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`
