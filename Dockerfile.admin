@@ -7,6 +7,8 @@ COPY apps/technician/package.json apps/technician/package.json
 COPY apps/mobile/package.json apps/mobile/package.json
 RUN npm ci
 COPY apps/admin apps/admin
+ARG NEXT_PUBLIC_SUBIL_API_URL
+ENV NEXT_PUBLIC_SUBIL_API_URL=${NEXT_PUBLIC_SUBIL_API_URL}
 RUN npm run build --workspace @subil/admin
 ENV NODE_ENV=production
 EXPOSE 3000
