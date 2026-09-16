@@ -104,7 +104,7 @@ function isAuthRoute(method, pathname) {
 
 function isPersistentRoute(method, pathname) {
   if (method === 'GET') {
-    return pathname==='/api/v1/notifications/me' || ['/api/v1/customers/me','/api/v1/customers/me/orders','/api/v1/customers/me/assets','/api/v1/customers/me/jobs'].includes(pathname) ||
+    return ['/api/v1/notifications/me','/api/v1/notifications/config'].includes(pathname) || ['/api/v1/customers/me','/api/v1/customers/me/orders','/api/v1/customers/me/assets','/api/v1/customers/me/jobs'].includes(pathname) ||
       pathname === '/api/v1/maintenance/stats' || pathname === '/api/v1/maintenance/assets' ||
       pathname === '/api/v1/jobs/stats' || pathname === '/api/v1/jobs' ||
       pathname === '/api/v1/jobs/escalations/stats' || pathname === '/api/v1/jobs/escalations' ||
