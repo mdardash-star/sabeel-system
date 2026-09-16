@@ -87,14 +87,14 @@ test('customer update validates payload before database access', async () => {
 });
 
 test('support adds an address only to an existing customer', async () => {
-  const db={query:async(sql,params)=>{assert.match(sql,/INSERT INTO service_locations/);assert.deepEqual(params,['c1','riyadh','حي الياسمين']);return{rows:[{id:'a1',customer_id:'c1',city_id:'riyadh',address_text:'حي الياسمين'}]};}};
+  const db={query:async(sql,params)=>{assert.match(sql,/INSERT INTO service_locations/);assert.deepEqual(params,['c1','riyadh','حي الياسمين',null]);return{rows:[{id:'a1',customer_id:'c1',city_id:'riyadh',address_text:'حي الياسمين'}]};}};
   const result=await routePersistentRequest({method:'POST',url:'/api/v1/customers/c1/addresses',role:'support',body:{cityId:'riyadh',addressText:'حي الياسمين'},db});
   assert.equal(result.status,201);
   assert.equal(result.data.address.id,'a1');
 });
 
 test('support registers a customer asset and derives its next maintenance date', async () => {
-  const db={query:async(sql,params)=>{assert.match(sql,/INSERT INTO installed_assets/);assert.deepEqual(params,['c1','جهاز سبيل 7 مراحل','SBL-100','2026-09-15T00:00:00.000Z','2027-09-15T00:00:00.000Z',6,'2027-03-15T00:00:00.000Z']);return{rows:[{id:'asset-1',product_id:params[1],next_maintenance_at:params[6],status:'active'}]};}};
+  const db={query:async(sql,params)=>{assert.match(sql,/INSERT INTO installed_assets/);assert.deepEqual(params,['c1','جهاز سبيل 7 مراحل','SBL-100','2026-09-15T00:00:00.000Z','2027-09-15T00:00:00.000Z',6,'2027-03-15T00:00:00.000Z',null]);return{rows:[{id:'asset-1',product_id:params[1],next_maintenance_at:params[6],status:'active'}]};}};
   const result=await routePersistentRequest({method:'POST',url:'/api/v1/customers/c1/assets',role:'support',body:{productId:'جهاز سبيل 7 مراحل',serialNumber:'SBL-100',installedAt:'2026-09-15',warrantyEndsAt:'2027-09-15',maintenanceIntervalMonths:6},db});
   assert.equal(result.status,201);
   assert.equal(result.data.asset.next_maintenance_at,'2027-03-15T00:00:00.000Z');
@@ -143,13 +143,20 @@ test('customer service history joins order, location and verified rating',async(
 
 test('support reads paginated maintenance history for an owned asset',async()=>{
   const db={query:async(sql,params)=>{
-    if(/FROM installed_assets WHERE id/.test(sql))return{rows:[{id:'asset-1',customer_id:'c1'}]};
+    if(/FROM installed_assets a/.test(sql)){assert.deepEqual(params,['asset-1','c1',null]);return{rows:[{id:'asset-1',customer_id:'c1'}]}};
     assert.match(sql,/FROM asset_maintenance_events/);assert.deepEqual(params,['asset-1','c1',10,0]);
     return{rows:[{id:'maintenance-1',notes:'تغيير فلاتر',total_count:1}]};
   }};
   const result=await routePersistentRequest({method:'GET',url:'/api/v1/customers/c1/assets/asset-1/history',role:'support',context:{limit:'10'},db});
   assert.equal(result.status,200);assert.equal(result.data.maintenance[0].id,'maintenance-1');
   assert.deepEqual(result.data.pagination,{limit:10,offset:0,total:1});
+});
+
+test('customer mutations reject records outside authenticated tenant',async()=>{
+  const tenantId='00000000-0000-4000-8000-000000000001';
+  const db={query:async(sql,params)=>{assert.match(sql,/organization_id=\$4/);assert.deepEqual(params,['foreign','riyadh','حي الاختبار',tenantId]);return{rows:[]}}};
+  const result=await routePersistentRequest({method:'POST',url:'/api/v1/customers/foreign/addresses',role:'support',context:{tenantId},body:{cityId:'riyadh',addressText:'حي الاختبار'},db});
+  assert.equal(result.status,404);assert.equal(result.data.error,'customer_not_found');
 });
 
 test('asset status update validates state before database access',async()=>{
