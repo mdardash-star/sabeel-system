@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { routeRequest } from './http/router.mjs';
 import { routePersistentRequest } from './http/persistent-router.mjs';
 import { routeTenantReadRequest } from './http/tenant-read-router.mjs';
+import { routeUserAdminRequest } from './http/user-admin-router.mjs';
 import { createDatabase } from './persistence/database.mjs';
 import { authenticateBearer } from './auth/session-auth.mjs';
 import { tenantContext } from './auth/tenant-context.mjs';
@@ -61,7 +62,8 @@ export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } 
 
       let result;
       if (persistent) {
-        result = await routeTenantReadRequest({ method: req.method, url: requestUrl.pathname, role, context, db });
+        result = await routeUserAdminRequest({ method: req.method, url: requestUrl.pathname, role, body, context, db });
+        if (!result) result = await routeTenantReadRequest({ method: req.method, url: requestUrl.pathname, role, context, db });
         if (!result) result = await routePersistentRequest({ method: req.method, url: requestUrl.pathname, role, body, context, db });
       } else {
         result = routeRequest({ method: req.method, url: requestUrl.pathname, role, body, context });
@@ -113,7 +115,8 @@ function isAuthRoute(method, pathname) {
 
 function isPersistentRoute(method, pathname) {
   if (method === 'GET') {
-    return ['/api/v1/notifications/me','/api/v1/notifications/config'].includes(pathname) || ['/api/v1/customers/me','/api/v1/customers/me/orders','/api/v1/customers/me/assets','/api/v1/customers/me/jobs'].includes(pathname) ||
+    return pathname === '/api/v1/users' || pathname === '/api/v1/users/roles' ||
+      ['/api/v1/notifications/me','/api/v1/notifications/config'].includes(pathname) || ['/api/v1/customers/me','/api/v1/customers/me/orders','/api/v1/customers/me/assets','/api/v1/customers/me/jobs'].includes(pathname) ||
       pathname === '/api/v1/maintenance/stats' || pathname === '/api/v1/maintenance/assets' ||
       pathname === '/api/v1/jobs/stats' || pathname === '/api/v1/jobs' ||
       pathname === '/api/v1/jobs/escalations/stats' || pathname === '/api/v1/jobs/escalations' ||
@@ -142,7 +145,8 @@ function isPersistentRoute(method, pathname) {
       pathname === '/api/v1/technicians/me/wallet';
   }
   if (method === 'POST') {
-    return ['/api/v1/notifications/subscriptions','/api/v1/notifications/subscriptions/disable'].includes(pathname) || /^\/api\/v1\/customers\/me\/jobs\/[^/]+\/rating$/.test(pathname) || pathname === '/api/v1/customers' || /^\/api\/v1\/customers\/[^/]+\/(?:addresses|assets)$/.test(pathname) ||
+    return pathname === '/api/v1/users' ||
+      ['/api/v1/notifications/subscriptions','/api/v1/notifications/subscriptions/disable'].includes(pathname) || /^\/api\/v1\/customers\/me\/jobs\/[^/]+\/rating$/.test(pathname) || pathname === '/api/v1/customers' || /^\/api\/v1\/customers\/[^/]+\/(?:addresses|assets)$/.test(pathname) ||
       /^\/api\/v1\/jobs\/[^/]+\/(?:assign|reassign)$/.test(pathname) ||
       pathname === '/api/v1/jobs/escalations/run' || /^\/api\/v1\/jobs\/[^/]+\/escalations\/resolve$/.test(pathname) ||
       ['/api/v1/inventory/items','/api/v1/inventory/receive','/api/v1/inventory/transfer','/api/v1/inventory/technician-issue'].includes(pathname) ||
@@ -162,6 +166,7 @@ function isPersistentRoute(method, pathname) {
       /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
       /^\/api\/v1\/settlements\/[^/]+\/(?:approve|reject|paid)$/.test(pathname);
   }
+  if (method === 'PATCH' && /^\/api\/v1\/users\/[^/]+$/.test(pathname)) return true;
   if (method === 'PATCH' && pathname === '/api/v1/notifications/me') return true;
   return method === 'PATCH' && (/^\/api\/v1\/ai\/finance\/anomalies\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/marketing\/recommendations\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/sales\/opportunities\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/insights\/[^/]+$/.test(pathname) || /^\/api\/v1\/conversations\/[^/]+$/.test(pathname) || /^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+$/.test(pathname) ||
