@@ -116,6 +116,7 @@ function isPersistentRoute(method, pathname) {
       ['/api/v1/conversations','/api/v1/conversations/stats'].includes(pathname) || /^\/api\/v1\/conversations\/[^/]+$/.test(pathname) ||
       ['/api/v1/ai/stats','/api/v1/ai/suggestions','/api/v1/ai/knowledge'].includes(pathname) ||
       ['/api/v1/ai/insights/stats','/api/v1/ai/insights','/api/v1/ai/brief'].includes(pathname) ||
+      ['/api/v1/ai/dispatch/stats','/api/v1/ai/dispatch/queue','/api/v1/ai/dispatch/recommendations'].includes(pathname) ||
       pathname === '/api/v1/inventory/stats' || pathname === '/api/v1/inventory' || pathname === '/api/v1/inventory/movements' ||
       pathname === '/api/v1/purchasing/stats' || pathname === '/api/v1/purchasing/suppliers' || pathname === '/api/v1/purchasing/orders' ||
       /^\/api\/v1\/technicians\/[^/]+\/inventory$/.test(pathname) ||
@@ -139,6 +140,7 @@ function isPersistentRoute(method, pathname) {
       pathname==='/api/v1/conversations/inbound' || /^\/api\/v1\/conversations\/[^/]+\/reply$/.test(pathname) ||
       pathname==='/api/v1/ai/knowledge' || /^\/api\/v1\/ai\/conversations\/[^/]+\/suggest$/.test(pathname) || /^\/api\/v1\/ai\/suggestions\/[^/]+\/(approve|reject|use)$/.test(pathname) ||
       pathname==='/api/v1/ai/insights/run' ||
+      /^\/api\/v1\/ai\/jobs\/[^/]+\/dispatch-recommendation$/.test(pathname) || /^\/api\/v1\/ai\/dispatch\/[^/]+\/(approve|reject)$/.test(pathname) ||
       /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+\/maintenance$/.test(pathname) ||
       /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
       /^\/api\/v1\/settlements\/[^/]+\/(?:approve|reject|paid)$/.test(pathname);
