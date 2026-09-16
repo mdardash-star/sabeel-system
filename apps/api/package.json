@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check:runtime": "node src/config/check-runtime.mjs",
+    "migrate": "node src/db/migrate.mjs",
     "start": "npm run check:runtime && node src/server.mjs",
     "test": "node --test tests/*.test.mjs",
     "worker:push": "node src/workers/push-worker.mjs"
