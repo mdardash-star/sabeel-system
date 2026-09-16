@@ -176,7 +176,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
 
   if (method === 'GET' && url === '/api/v1/settlements/stats') {
     if (!can(role, 'settlements:read')) return response(403, { error: 'forbidden' });
-    const stats = await createRepositories(db).settlements.operationsStats();
+    const stats = await createRepositories(db).settlements.operationsStats(context.tenantId||null);
     return response(200, { stats });
   }
 
@@ -184,7 +184,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     if (!can(role, 'reports:finance')) return response(403, { error: 'forbidden' });
     const range = parseDateRange(context.from, context.to);
     if (!range) return response(400, { error: 'invalid_date_range' });
-    const report = await createRepositories(db).reports.profitability(range.from, range.to);
+    const report = await createRepositories(db).reports.profitability(range.from, range.to, context.tenantId||null);
     return response(200, { ...report, range });
   }
 
@@ -285,7 +285,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const status = context.status || 'all';
     if (!['all', 'pending_approval', 'approved', 'rejected', 'paid'].includes(status)) return response(400, { error: 'invalid_settlement_status_filter' });
     const rows = await createRepositories(db).settlements.listForOperations({
-      ...pagination, status, query: context.query || ''
+      ...pagination, status, query: context.query || '', tenantId: context.tenantId||null
     });
     return response(200, {
       settlements: rows.map(({ total_count, ...settlement }) => settlement),
@@ -660,7 +660,8 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     try {
       const result = await approveSettlementAndCreditWallet(db, {
         settlementId: approveMatch[1],
-        approverUserId: context.userId
+        approverUserId: context.userId,
+        tenantId: context.tenantId||null
       });
       return response(200, result);
     } catch (error) {
@@ -677,7 +678,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const reason = cleanOptional(body.reason);
     if (reason.length < 3) return response(400, { error: 'rejection_reason_required' });
     try {
-      const settlement = await rejectSettlement(db, { settlementId: rejectMatch[1], reason, actorUserId: context.userId });
+      const settlement = await rejectSettlement(db, { settlementId: rejectMatch[1], reason, actorUserId: context.userId, tenantId: context.tenantId||null });
       return settlement ? response(200, { settlement }) : response(404, { error: 'settlement_not_found' });
     } catch (error) {
       if (error.message === 'Settlement is not rejectable') return response(409, { error: 'settlement_not_rejectable' });
@@ -692,7 +693,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const paymentReference = cleanOptional(body.paymentReference);
     if (paymentReference.length < 3) return response(400, { error: 'payment_reference_required' });
     try {
-      const settlement = await markSettlementPaid(db, { settlementId: paidMatch[1], paymentReference, actorUserId: context.userId });
+      const settlement = await markSettlementPaid(db, { settlementId: paidMatch[1], paymentReference, actorUserId: context.userId, tenantId: context.tenantId||null });
       return settlement ? response(200, { settlement }) : response(404, { error: 'settlement_not_found' });
     } catch (error) {
       if (error.message === 'Settlement is not payable') return response(409, { error: 'settlement_not_payable' });
