@@ -119,6 +119,11 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 ## Notifications
 - POST `/notifications/events`
 - GET `/notifications/deliveries/:id`
+- GET/PATCH `/notifications/me` — self-service push preferences for service, maintenance and marketing
+- POST `/notifications/subscriptions` — registers or refreshes the signed-in customer's or technician's browser device
+- POST `/notifications/subscriptions/disable` — disables only the signed-in user's matching device endpoint
+
+Push delivery is opt-in per browser. Marketing defaults to disabled, while service and maintenance updates default to enabled. Pending events are materialized idempotently per active subscription and can be processed with row locking for safe worker concurrency.
 
 ## Marketing
 - GET `/marketing/stats` — campaign and recipient delivery counters
