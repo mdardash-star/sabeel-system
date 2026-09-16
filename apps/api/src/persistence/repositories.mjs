@@ -669,6 +669,12 @@ export function createRepositories(db) {
       }
     },
 
+    ai: {
+      async stats(){const{rows}=await db.query(`SELECT COUNT(*) FILTER(WHERE status='draft')::integer AS pending_review,COUNT(*) FILTER(WHERE status='approved')::integer AS approved,COUNT(*) FILTER(WHERE status='used')::integer AS used,COUNT(*) FILTER(WHERE risk_level='high'AND status='draft')::integer AS high_risk,COALESCE(ROUND(AVG(confidence)*100),0)::integer AS average_confidence FROM ai_suggestions`);return rows[0]},
+      async suggestions({status='all',limit=20,offset=0}={}){const{rows}=await db.query(`SELECT ai.*,cc.channel,cc.contact_handle,cc.subject,c.name AS customer_name,COUNT(*)OVER()::integer AS total_count FROM ai_suggestions ai JOIN customer_conversations cc ON cc.id=ai.conversation_id LEFT JOIN customers c ON c.id=cc.customer_id WHERE($1='all'OR ai.status=$1)ORDER BY CASE ai.risk_level WHEN 'high'THEN 0 WHEN 'medium'THEN 1 ELSE 2 END,ai.created_at DESC LIMIT $2 OFFSET $3`,[status,limit,offset]);return rows},
+      async knowledge({status='approved',limit=50,offset=0}={}){const{rows}=await db.query(`SELECT *,COUNT(*)OVER()::integer AS total_count FROM ai_knowledge_articles WHERE($1='all'OR status=$1)ORDER BY updated_at DESC LIMIT $2 OFFSET $3`,[status,limit,offset]);return rows}
+    },
+
     reports: {
       async profitability(from, to) {
         const base = `FROM orders o JOIN customers c ON c.id = o.customer_id
