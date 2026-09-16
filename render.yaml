@@ -8,7 +8,7 @@ services:
     name: subil-api
     runtime: node
     branch: develop
-    buildCommand: npm ci
+    buildCommand: npm ci --include=dev
     startCommand: npm run migrate --workspace @subil/api && npm run start --workspace @subil/api
     healthCheckPath: /health
     envVars:
@@ -52,7 +52,7 @@ services:
     name: subil-admin
     runtime: node
     branch: develop
-    buildCommand: npm ci && npm run build --workspace @subil/admin
+    buildCommand: npm ci --include=dev && npm run build --workspace @subil/admin
     startCommand: npm run start --workspace @subil/admin -- -p $PORT
     envVars:
       - key: NODE_ENV
