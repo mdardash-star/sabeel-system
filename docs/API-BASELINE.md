@@ -84,6 +84,16 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - POST `/settlements/:id/reject` — reason-required finance rejection with an audit event
 - POST `/settlements/:id/paid` — records an external payment reference, closes the settlement and marks its wallet credit paid atomically
 
+## Inventory
+- GET `/inventory?status=all|low|out&q=&limit=20&offset=0` — stock by item across warehouses with reorder state and technician-held quantity
+- GET `/inventory/stats` — SKU, unit, value, low-stock and out-of-stock counters
+- GET `/inventory/movements?limit=20&offset=0` — auditable receipt, transfer and technician issue ledger
+- GET `/technicians/:id/inventory` — current positive stock held by one technician
+- POST `/inventory/items` — creates a uniquely identified SKU with unit, cost and reorder threshold
+- POST `/inventory/receive` — atomically receives stock and updates the item's latest operational unit cost
+- POST `/inventory/transfer` — atomically moves stock between different active warehouses without allowing a negative balance
+- POST `/inventory/technician-issue` — atomically deducts warehouse stock and credits the active technician's custody
+
 ## Notifications
 - POST `/notifications/events`
 - GET `/notifications/deliveries/:id`
