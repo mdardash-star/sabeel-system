@@ -204,6 +204,7 @@ small.meta { margin-top:4px; }
 .preview-login-note span { margin-left:5px; color:#c38010; font-weight:800; }
 .fallback-login { display:block; margin:19px auto 0; padding:5px; border:0; color:#939ba7; background:transparent; font-size:10px; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
 .login-footer { margin:40px 0 0; color:#a2a9b3; text-align:center; font-size:9px; }
+.purchasing-head-actions{display:flex;align-items:center;gap:9px}.purchasing-worklist{overflow:hidden}.purchase-state{display:inline-flex;padding:6px 9px;border-radius:7px;font-size:9px;font-weight:800}.purchase-state.draft{color:#687386;background:#eef1f5}.purchase-state.approved{color:#176ca9;background:#e7f2fa}.purchase-state.partially_received{color:#9a6309;background:#fff5da}.purchase-state.received{color:#187946;background:#eaf7ef}.purchase-state.cancelled{color:#a53d3d;background:#fff0f0}.purchasing-modal{max-height:92vh;overflow:auto}.customer-modal select{height:45px;padding:0 13px;outline:0;border:1px solid #dce2e8;border-radius:9px;background:#fff}.customer-modal select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(7,90,156,.08)}
 
 @media (max-width:900px) {
   .login-page { grid-template-columns:1fr; }.login-visual{display:none}.login-panel{padding:35px 22px}.login-mobile-brand{display:flex}
