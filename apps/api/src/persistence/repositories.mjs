@@ -131,6 +131,15 @@ export function createRepositories(db) {
     },
 
     customers: {
+      async findByUserId(userId) {
+        const { rows } = await db.query(
+          `SELECT c.id,c.name,c.created_at,u.mobile,
+                  (SELECT COUNT(*)::integer FROM orders o WHERE o.customer_id=c.id) AS order_count,
+                  (SELECT COUNT(*)::integer FROM installed_assets a WHERE a.customer_id=c.id AND a.status='active') AS active_asset_count
+           FROM customers c JOIN users u ON u.id=c.user_id WHERE c.user_id=$1 LIMIT 1`, [userId]
+        );
+        return rows[0] || null;
+      },
       async stats() {
         const { rows } = await db.query(
           `SELECT COUNT(*)::integer AS total,
