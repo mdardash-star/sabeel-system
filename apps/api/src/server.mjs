@@ -119,6 +119,7 @@ function isPersistentRoute(method, pathname) {
       ['/api/v1/ai/insights/stats','/api/v1/ai/insights','/api/v1/ai/brief'].includes(pathname) ||
       ['/api/v1/ai/dispatch/stats','/api/v1/ai/dispatch/queue','/api/v1/ai/dispatch/recommendations'].includes(pathname) ||
       ['/api/v1/ai/sales/stats','/api/v1/ai/sales/opportunities'].includes(pathname) ||
+      ['/api/v1/ai/marketing/stats','/api/v1/ai/marketing/recommendations'].includes(pathname) ||
       pathname === '/api/v1/inventory/stats' || pathname === '/api/v1/inventory' || pathname === '/api/v1/inventory/movements' ||
       pathname === '/api/v1/purchasing/stats' || pathname === '/api/v1/purchasing/suppliers' || pathname === '/api/v1/purchasing/orders' ||
       /^\/api\/v1\/technicians\/[^/]+\/inventory$/.test(pathname) ||
@@ -144,11 +145,12 @@ function isPersistentRoute(method, pathname) {
       pathname==='/api/v1/ai/insights/run' ||
       /^\/api\/v1\/ai\/jobs\/[^/]+\/dispatch-recommendation$/.test(pathname) || /^\/api\/v1\/ai\/dispatch\/[^/]+\/(approve|reject)$/.test(pathname) ||
       pathname==='/api/v1/ai/sales/scan' ||
+      pathname==='/api/v1/ai/marketing/scan' ||
       /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+\/maintenance$/.test(pathname) ||
       /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
       /^\/api\/v1\/settlements\/[^/]+\/(?:approve|reject|paid)$/.test(pathname);
   }
-  return method === 'PATCH' && (/^\/api\/v1\/ai\/sales\/opportunities\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/insights\/[^/]+$/.test(pathname) || /^\/api\/v1\/conversations\/[^/]+$/.test(pathname) || /^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
+  return method === 'PATCH' && (/^\/api\/v1\/ai\/marketing\/recommendations\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/sales\/opportunities\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/insights\/[^/]+$/.test(pathname) || /^\/api\/v1\/conversations\/[^/]+$/.test(pathname) || /^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/technicians\/[^/]+\/status$/.test(pathname) ||
     /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname));
