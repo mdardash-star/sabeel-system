@@ -288,7 +288,7 @@ test('live HTTP maintenance completion updates an owned asset atomically',async(
     if(/INSERT INTO audit_log/.test(sql))return{rows:[]};
     throw new Error('Unexpected query');
   },release(){}};
-  const db={query:async()=>({rows:[]}),connect:async()=>client};
+  const db={query:async(sql)=>/FROM installed_assets a/.test(sql)?{rows:[{id:'asset-1',customer_id:'customer-1',status:'active'}]}:{rows:[]},connect:async()=>client};
   const server=createApiServer({db:withSession(db,{role:'support',userId:'support-1'})});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
@@ -301,7 +301,7 @@ test('live HTTP maintenance completion updates an owned asset atomically',async(
 
 test('live HTTP asset status update is scoped and audited',async(t)=>{
   const client={query:async(sql)=>{if(sql==='BEGIN'||sql==='COMMIT')return{rows:[]};if(/FROM installed_assets/.test(sql))return{rows:[{id:'asset-1',customer_id:'customer-1',status:'active'}]};if(/UPDATE installed_assets/.test(sql))return{rows:[{id:'asset-1',customer_id:'customer-1',status:'inactive'}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error('Unexpected query');},release(){}};
-  const db={query:async()=>({rows:[]}),connect:async()=>client};
+  const db={query:async(sql)=>/FROM installed_assets a/.test(sql)?{rows:[{id:'asset-1',customer_id:'customer-1',status:'active'}]}:{rows:[]},connect:async()=>client};
   const server=createApiServer({db:withSession(db,{role:'branch_manager',userId:'manager-1'})});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
