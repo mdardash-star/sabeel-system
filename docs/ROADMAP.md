@@ -60,7 +60,7 @@
 - offline technician mode
 - multi-tenant readiness
 
-Multi-tenant readiness starts with an active organization bound to every user and resolved exclusively from the authenticated session. Request headers cannot select or override the tenant. Customer and technician self-service profile resolution is tenant constrained. Customer CRM, technician management, job operations, manual dispatch, settlements and profitability reports are tenant constrained. Remaining inventory, purchasing, marketing and AI tables still require tenant partitioning and tenant-scoped unique constraints before hosting another organization.
+Multi-tenant readiness now includes organization-bound users and session-derived tenant context, tenant-scoped customer CRM, technician management, job operations, dispatch, settlements and profitability, plus tenant columns and scoped write paths for inventory, purchasing, marketing campaigns, conversations and AI workloads. Tenant-scoped uniqueness is enforced for inventory SKUs, suppliers, purchase orders, segments, carts, content, conversation threads and AI active worklists. The remaining hardening item is explicit tenant propagation through legacy read-only repository/router paths for inventory, purchasing, marketing and AI before hosting a second organization.
 
 ## Release rule
 No feature reaches production until tested outside the live store and reviewed for migration, rollback, permissions and data safety.
