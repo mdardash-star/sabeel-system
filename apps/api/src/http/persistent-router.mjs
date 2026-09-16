@@ -93,7 +93,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
 
   if (method === 'GET' && url === '/api/v1/jobs/stats') {
     if (!can(role, 'jobs:read')) return response(403, { error: 'forbidden' });
-    const stats = await createRepositories(db).jobs.operationsStats();
+    const stats = await createRepositories(db).jobs.operationsStats(context.tenantId||null);
     return response(200, { stats });
   }
 
@@ -106,7 +106,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       return response(400, { error: 'invalid_job_status_filter' });
     }
     const rows = await createRepositories(db).jobs.listForOperations({
-      ...pagination, status, query: context.query || ''
+      ...pagination, status, query: context.query || '', tenantId: context.tenantId||null
     });
     return response(200, {
       jobs: rows.map(({ total_count, ...job }) => job),
@@ -471,7 +471,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) return response(400, { error: 'invalid_pagination' });
     try {
       const result = await listDispatchCandidates(db, candidatesMatch[1], {
-        windowStart: context.from, windowEnd: context.to, limit
+        windowStart: context.from, windowEnd: context.to, limit, tenantId: context.tenantId||null
       });
       return response(200, result);
     } catch (error) {
@@ -494,7 +494,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       return response(400, { error: 'invalid_assignment' });
     }
     try {
-      const input = { jobId: dispatchMatch[1], technicianId, scheduledAt, serviceDurationMinutes, actorUserId: context.userId };
+      const input = { jobId: dispatchMatch[1], technicianId, scheduledAt, serviceDurationMinutes, actorUserId: context.userId, tenantId: context.tenantId||null };
       const job = dispatchMatch[2] === 'assign'
         ? await assignPersistentJob(db, input)
         : await reassignPersistentJob(db, { ...input, reason });
