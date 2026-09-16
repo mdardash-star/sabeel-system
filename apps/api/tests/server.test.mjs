@@ -141,7 +141,7 @@ test('live HTTP operations job stats are authenticated',async(t)=>{
 });
 
 test('live HTTP operations jobs forward search status and pagination',async(t)=>{
-  const db={query:async(sql,params)=>{assert.match(sql,/sla_state/);assert.deepEqual(params,['نورة','active',5,10]);return{rows:[{id:'job-1',customer_name:'نورة',status:'in_progress',sla_state:'on_track',total_count:7}]};}};
+  const db={query:async(sql,params)=>{assert.match(sql,/sla_state/);assert.deepEqual(params,['نورة','active',5,10,organizationId]);return{rows:[{id:'job-1',customer_name:'نورة',status:'in_progress',sla_state:'on_track',total_count:7}]};}};
   const server=createApiServer({db:withSession(db,{role:'support'})});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/jobs?status=active&q=${encodeURIComponent('نورة')}&limit=5&offset=10`,{headers:authHeaders});
@@ -225,7 +225,7 @@ test('live HTTP dispatcher candidate route ranks eligible technicians',async(t)=
 });
 
 test('live HTTP dispatcher assignment route commits an audited schedule',async(t)=>{
-  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/service_jobs WHERE id=\$1 FOR UPDATE/.test(sql))return{rows:[{id:'job-1',city_id:'riyadh',status:'pending_assignment',service_duration_minutes:60}]};if(/FROM technicians WHERE/.test(sql))return{rows:[{id:'tech-1',city_id:'riyadh'}]};if(/FROM technician_availability/.test(sql))return{rows:[{'?column?':1}]};if(/SELECT id FROM service_jobs/.test(sql))return{rows:[]};if(/UPDATE service_jobs/.test(sql))return{rows:[{id:'job-1',technician_id:'tech-1',status:'scheduled',scheduled_at:params[2]}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
+  const client={query:async(sql,params=[])=>{if(['BEGIN','COMMIT'].includes(sql))return{rows:[]};if(/service_jobs WHERE id=\$1 AND/.test(sql))return{rows:[{id:'job-1',organization_id:organizationId,city_id:'riyadh',status:'pending_assignment',service_duration_minutes:60}]};if(/FROM technicians t JOIN users/.test(sql))return{rows:[{id:'tech-1',city_id:'riyadh'}]};if(/FROM technician_availability/.test(sql))return{rows:[{'?column?':1}]};if(/SELECT id FROM service_jobs/.test(sql))return{rows:[]};if(/UPDATE service_jobs/.test(sql))return{rows:[{id:'job-1',technician_id:'tech-1',status:'scheduled',scheduled_at:params[2]}]};if(/INSERT INTO audit_log/.test(sql))return{rows:[]};throw new Error(`unexpected query: ${sql}`);},release(){}};
   const db={query:async()=>({rows:[]}),connect:async()=>client};const server=createApiServer({db:withSession(db,{role:'dispatcher',userId:'dispatcher-1'})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const {port}=server.address();const response=await fetch(`http://127.0.0.1:${port}/api/v1/jobs/job-1/assign`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify({technicianId:'tech-1',scheduledAt:'2026-09-20T10:00:00Z',serviceDurationMinutes:60})});const payload=await response.json();assert.equal(response.status,200);assert.equal(payload.job.status,'scheduled');
 });
