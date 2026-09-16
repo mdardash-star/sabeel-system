@@ -10,12 +10,27 @@ Persistent application routes require `Authorization: Bearer <session-token>`. T
 - POST `/auth/logout`
 - GET `/me`
 
+OTP uses normalized Saudi E.164 mobile numbers (`+9665XXXXXXXX`), six-digit codes, a five-minute expiry, a one-minute resend cooldown, and five verification attempts. Codes are stored only as keyed hashes. Successful verification consumes the challenge and creates a hashed 30-day session. Unknown mobile numbers create a customer identity automatically; inactive users remain blocked. The SMS provider is configured through `OTP_SENDER_URL` and `OTP_SENDER_API_KEY`.
+
+## Customer PWA
+- GET `/customers/me` — customer profile resolved strictly from the authenticated customer user
+- GET `/customers/me/orders?limit=20&offset=0` — the signed-in customer's orders
+- GET `/customers/me/assets?limit=20&offset=0` — installed devices, warranty and maintenance schedule
+- GET `/customers/me/jobs?limit=20&offset=0` — service status and verified rating state
+- POST `/customers/me/jobs/:id/rating` — rates one owned completed service once and writes an audit event
+
 ## Customers / CRM
 - GET/POST `/customers`
+- GET `/customers/stats`
 - GET/PATCH `/customers/:id`
 - GET/POST `/customers/:id/addresses`
-- GET `/customers/:id/timeline`
-- GET `/customers/:id/assets`
+- GET `/customers/:id/timeline?limit=20&offset=0`
+- GET/POST `/customers/:id/assets`
+- GET `/customers/:id/assets/:assetId/history`
+- POST `/customers/:id/assets/:assetId/maintenance`
+- PATCH `/customers/:id/assets/:assetId`
+- GET `/customers/:id/orders`
+- GET `/customers/:id/jobs?limit=20&offset=0` — paginated service history with order, location, technician assignment and verified customer rating
 
 ## Commerce
 - GET `/catalog/products`
@@ -24,6 +39,15 @@ Persistent application routes require `Authorization: Bearer <session-token>`. T
 
 ## Field Service
 - GET/POST `/jobs`
+- GET `/jobs?status=all|open|pending_assignment|scheduled|active|overdue|completed|cancelled&q=&limit=20&offset=0` — operations worklist ordered by assignment and SLA urgency
+- GET `/jobs/stats` — open, unassigned, scheduled, active, overdue and completed-today counters
+- GET `/jobs/:id/candidates?from=<ISO>&to=<ISO>&limit=10` — eligible technicians ranked by distance, workload and rating
+- POST `/jobs/:id/assign` — validates city, skill, availability and schedule conflicts before audited assignment
+- POST `/jobs/:id/reassign` — requires a reason and preserves the previous assignment in the audit log
+- GET `/jobs/escalations?status=open|resolved|all&limit=20&offset=0` — prioritized SLA escalation queue
+- GET `/jobs/escalations/stats` — open escalation counters by severity and resolved-today count
+- POST `/jobs/escalations/run` — idempotently detects late active jobs at level 1 (under two hours), level 2 (two hours) or level 3 (four hours)
+- POST `/jobs/:id/escalations/resolve` — resolves every open escalation for a job with a required reason and audit record
 - GET/PATCH `/jobs/:id`
 - POST `/jobs/:id/assign`
 - POST `/jobs/:id/schedule`
@@ -36,11 +60,17 @@ Persistent application routes require `Authorization: Bearer <session-token>`. T
 - POST `/jobs/:id/rating`
 
 ## Technician
+- GET `/technicians?status=all|active|inactive&q=&limit=20&offset=0` — operations roster with skills, current workload, 30-day completion, punctuality and verified rating metrics
+- GET `/technicians/stats` — total, active, inactive, available-now, busy-now and verified-rating counters
+- GET `/technicians/:id/performance?from=<ISO>&to=<ISO>` — bounded performance, payout totals and ten most recent jobs; defaults to 30 days and allows up to 366 days
+- PATCH `/technicians/:id/status` — branch-manager/admin activation or reason-required deactivation with an audit record
 - GET `/technicians/me/jobs?from=<ISO>&to=<ISO>`
 - GET `/technicians/me/jobs/:id` — returns the assigned job only; another technician's job returns `404`
 - PATCH `/technicians/me/jobs/:id/status` — persists a valid technician workflow transition and audit event; completion uses the evidence endpoint
 - POST `/technicians/me/jobs/:id/complete` — atomically saves evidence, completes the owned job, and creates a pending settlement from server-side order costs and compensation policy
 - GET `/technicians/me/wallet?limit=20&offset=0` — PostgreSQL-backed balance and paginated ledger scoped to the signed-in technician
+
+تستهلك بوابة الفني PWA هذه المسارات بجلسة OTP خاصة بدور `technician`. لا تعرض البوابة رقم العميل، ولا تسمح بإغلاق المهمة دون إثبات، ولا تخزن تغييرات تشغيلية وهمية أثناء انقطاع الاتصال.
 
 The signed-in user is resolved to an active technician profile server-side. Job lists are read from PostgreSQL and expose operational location fields only; customer contact fields are never selected.
 
@@ -49,17 +79,103 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - GET `/assets/:id/history`
 - GET/POST `/maintenance/plans`
 - POST `/maintenance/reminders/run`
+- GET `/maintenance/stats` — active, overdue and upcoming maintenance counters
+- GET `/maintenance/assets?window=overdue|7d|30d|all&q=&limit=20&offset=0` — searchable paginated maintenance worklist
 
 ## Finance
 - GET/POST `/costs`
 - GET/POST `/compensation-policies`
 - GET `/technicians/:id/accruals`
 - POST `/settlements`
+- GET `/settlements?status=all|pending_approval|approved|rejected|paid&q=&limit=20&offset=0` — searchable finance worklist with order margin, policy and technician payout inputs
+- GET `/settlements/stats` — approval counts and pending, approved and paid-this-month amounts
 - POST `/settlements/:id/approve` — finance-authorized PostgreSQL transaction that approves once, credits the technician wallet idempotently, and writes an audit event
+- POST `/settlements/:id/reject` — reason-required finance rejection with an audit event
+- POST `/settlements/:id/paid` — records an external payment reference, closes the settlement and marks its wallet credit paid atomically
+
+## Inventory
+- GET `/inventory?status=all|low|out&q=&limit=20&offset=0` — stock by item across warehouses with reorder state and technician-held quantity
+- GET `/inventory/stats` — SKU, unit, value, low-stock and out-of-stock counters
+- GET `/inventory/movements?limit=20&offset=0` — auditable receipt, transfer and technician issue ledger
+- GET `/technicians/:id/inventory` — current positive stock held by one technician
+- POST `/inventory/items` — creates a uniquely identified SKU with unit, cost and reorder threshold
+- POST `/inventory/receive` — atomically receives stock and updates the item's latest operational unit cost
+- POST `/inventory/transfer` — atomically moves stock between different active warehouses without allowing a negative balance
+- POST `/inventory/technician-issue` — atomically deducts warehouse stock and credits the active technician's custody
+
+## Reports
+- GET `/reports/profitability?from=<ISO>&to=<ISO>` — finance-authorized order profitability summary, daily trend, product, city and channel breakdowns, and the latest 50 orders
+- Product cost is snapshotted from the matching inventory SKU when a WooCommerce line item is ingested, preserving historical margin accuracy.
+
+## Purchasing
+- GET `/purchasing/stats` — open, approval, receipt, overdue and value counters
+- GET `/purchasing/suppliers?q=&limit=20&offset=0` — active suppliers with order count and spend
+- POST `/purchasing/suppliers` — creates a supplier with an audit record
+- GET `/purchasing/orders?status=all|draft|approved|partially_received|received|cancelled|overdue&q=&limit=20&offset=0` — searchable orders with receipt progress and line details
+- POST `/purchasing/orders` — creates a costed multi-line draft purchase order
+- POST `/purchasing/orders/:id/approve` — approves a draft order
+- POST `/purchasing/orders/:id/receive` — atomically records partial or complete receipt, updates item cost and warehouse balance, and prevents over-receipt
 
 ## Notifications
 - POST `/notifications/events`
 - GET `/notifications/deliveries/:id`
+- GET/PATCH `/notifications/me` — self-service push preferences for service, maintenance and marketing
+- GET `/notifications/config` — returns only whether Push is configured and the public VAPID key; provider credentials remain server-side
+- POST `/notifications/subscriptions` — registers or refreshes the signed-in customer's or technician's browser device
+- POST `/notifications/subscriptions/disable` — disables only the signed-in user's matching device endpoint
+
+Push delivery is opt-in per browser. Marketing defaults to disabled, while service and maintenance updates default to enabled. Pending events are materialized idempotently per active subscription and can be processed with row locking for safe worker concurrency.
+
+The push worker claims deliveries with `SKIP LOCKED`, sends through the configured provider adapter, retries transient failures with bounded exponential backoff, deactivates endpoints returning `404/410`, and derives the parent event status from all device deliveries. Run it separately with `npm run worker:push`.
+
+## Marketing
+- GET `/marketing/stats` — campaign and recipient delivery counters
+- GET/POST `/marketing/segments` — reusable dynamic segments: all, repeat, dormant 90 days, maintenance due 30 days and high value
+- GET `/marketing/audience-preview?segmentType=...` — current audience size and ten preview customers
+- GET/POST `/marketing/campaigns` — campaign worklist and draft/scheduled creation
+- POST `/marketing/campaigns/:id/launch` — materializes the current segment into auditable pending notification events without calling an external provider directly
+- GET `/marketing/abandoned-carts` and `/marketing/abandoned-carts/stats` — recovery queue, at-risk value and recovery performance
+- POST `/marketing/abandoned-carts` — idempotently imports or refreshes an open cart
+- POST `/marketing/abandoned-carts/recovery/run` — queues at most two reminders per cart with a 24-hour cooldown
+- POST `/marketing/abandoned-carts/:id/recovered` — closes an active cart as recovered and optionally links its order
+- GET `/marketing/content` and `/marketing/content/stats` — filterable content calendar and workflow/SEO counters
+- POST `/marketing/content` — creates unique-slug social, blog, email or landing-page content and calculates a deterministic SEO score
+- POST `/marketing/content/:id/transition` — audited draft, review, approval, scheduling and publishing workflow
+- POST `/marketing/touches` — records first-party UTM/source touchpoints for a visitor or known customer
+- POST `/marketing/orders/:id/attribute` — applies first/last-touch attribution from the preceding 30-day window
+- POST `/marketing/spend` — records audited campaign spend for ROAS calculation
+- GET `/marketing/attribution?from=<ISO>&to=<ISO>` — attributed revenue, conversion coverage, channel/campaign performance, spend and ROAS
+
+## Unified Customer Conversations
+- GET `/conversations/stats` — active, waiting, priority and unread counters
+- GET `/conversations?status=active|open|pending_agent|waiting_customer|closed&channel=all|whatsapp|email|instagram|x|sms|webchat&q=&limit=20&offset=0` — prioritized omnichannel inbox
+- GET `/conversations/:id` — customer-linked conversation and chronological messages
+- POST `/conversations/inbound` — idempotent connector ingress using the provider message identifier
+- POST `/conversations/:id/reply` — queues an audited agent response and marks the thread waiting for the customer
+- PATCH `/conversations/:id` — assigns, prioritizes, reopens or closes a conversation with audit history
+
+## SUBIL AI Copilot
+- GET `/ai/stats` and `/ai/suggestions` — review queue, risk and confidence metrics
+- POST `/ai/conversations/:id/suggest` — creates a source-backed reply draft from approved knowledge and recent conversation context
+- POST `/ai/suggestions/:id/approve|reject` — manager review gate; every decision is audited
+- POST `/ai/suggestions/:id/use` — sends only an approved draft through the existing queued conversation delivery path
+- GET/POST `/ai/knowledge` — approved operational knowledge used to ground reply suggestions
+- AI never sends autonomously. High-risk topics such as pricing, refunds, warranties and complaints are explicitly flagged for human review.
+- GET `/ai/insights/stats`, `/ai/insights` and `/ai/brief` — prioritized operational exceptions and the latest executive daily brief
+- POST `/ai/insights/run` — idempotent daily scan across overdue jobs, escalations, low stock, settlements, abandoned carts, campaigns and customer conversations
+- PATCH `/ai/insights/:id` — acknowledges, resolves or dismisses an open insight with a mandatory resolution note when resolved
+- GET `/ai/dispatch/queue`, `/ai/dispatch/recommendations` and `/ai/dispatch/stats` — pending assignment jobs and explainable recommendation worklist
+- POST `/ai/jobs/:id/dispatch-recommendation` — ranks only eligible, available and conflict-free technicians using distance, rating and workload
+- POST `/ai/dispatch/:id/approve|reject` — records the dispatcher's decision and selected eligible candidate; it never assigns the job automatically
+- GET `/ai/sales/stats` and `/ai/sales/opportunities` — scored sales pipeline across maintenance, abandoned carts, cross-sell, win-back and conversation follow-up
+- POST `/ai/sales/scan` — idempotently evaluates CRM, commerce, asset and conversation signals without contacting customers
+- PATCH `/ai/sales/opportunities/:id` — controlled approval, contact and outcome workflow with audited transitions
+- GET `/ai/marketing/stats` and `/ai/marketing/recommendations` — prioritized campaign, content, delivery, attribution and budget actions
+- POST `/ai/marketing/scan` — idempotent analysis of 30-day performance signals; it does not create or launch campaigns automatically
+- PATCH `/ai/marketing/recommendations/:id` — human approval, scheduling and completion workflow with audited outcomes
+- GET `/ai/finance/stats` and `/ai/finance/anomalies` — financial exception queue and estimated exposure
+- POST `/ai/finance/scan` — idempotent detection of negative-margin orders, revenue drops, settlement backlog and overdue purchases
+- PATCH `/ai/finance/anomalies/:id` — finance-only review and resolution workflow with mandatory outcome notes
 
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`

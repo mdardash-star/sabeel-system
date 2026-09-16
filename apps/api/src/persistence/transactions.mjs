@@ -17,6 +17,32 @@ export async function withTransaction(db, work) {
   }
 }
 
+export async function setTechnicianActive(db, { technicianId, isActive, reason = '', actorUserId, tenantId = null }) {
+  return withTransaction(db, async (client) => {
+    const locked = await client.query(
+      `SELECT t.id, t.user_id, t.is_active, u.is_active AS user_is_active
+       FROM technicians t JOIN users u ON u.id = t.user_id
+       WHERE t.id=$1 AND ($2::uuid IS NULL OR u.organization_id=$2) FOR UPDATE OF t`,
+      [technicianId,tenantId]
+    );
+    const current = locked.rows[0];
+    if (!current) return null;
+    if (current.is_active === isActive) throw new Error('Technician status is unchanged');
+
+    const updated = await client.query(
+      `UPDATE technicians SET is_active = $2 WHERE id = $1
+       RETURNING id, user_id, city_id, branch_id, compensation_policy_id, is_active, created_at`,
+      [technicianId, isActive]
+    );
+    await client.query(
+      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, 'technician.status_changed', 'technician', $2, $3::jsonb)`,
+      [actorUserId, technicianId, JSON.stringify({ from: current.is_active, to: isActive, reason: reason.trim() })]
+    );
+    return updated.rows[0];
+  });
+}
+
 export async function transitionTechnicianJob(db, { jobId, technicianId, actorUserId, toStatus }) {
   if (toStatus === 'completed') throw new Error('Completion requires evidence endpoint');
 
@@ -136,6 +162,82 @@ export async function completeTechnicianJob(db, { jobId, technicianId, actorUser
   });
 }
 
+export async function completeAssetMaintenance(db, { customerId, assetId, actorUserId, completedAt, notes = '' }) {
+  return withTransaction(db, async (client) => {
+    const locked = await client.query(
+      `SELECT id, customer_id, status, maintenance_interval_months
+       FROM installed_assets
+       WHERE id = $1 AND customer_id = $2
+       FOR UPDATE`,
+      [assetId, customerId]
+    );
+    const current = locked.rows[0];
+    if (!current) return null;
+    if (current.status !== 'active') throw new Error('Asset is not active');
+
+    const nextMaintenanceAt = addUtcMonths(completedAt, Number(current.maintenance_interval_months || 6));
+    const updated = await client.query(
+      `UPDATE installed_assets
+       SET last_maintenance_at = $3, next_maintenance_at = $4
+       WHERE id = $1 AND customer_id = $2
+       RETURNING id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
+                 maintenance_interval_months, last_maintenance_at, next_maintenance_at, status`,
+      [assetId, customerId, completedAt, nextMaintenanceAt]
+    );
+    const event = await client.query(
+      `INSERT INTO asset_maintenance_events (asset_id, completed_at, notes, performed_by)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, asset_id, completed_at, notes, performed_by, created_at`,
+      [assetId, completedAt, notes, actorUserId]
+    );
+    await client.query(
+      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, 'asset.maintenance_completed', 'installed_asset', $2, $3::jsonb)`,
+      [actorUserId, assetId, JSON.stringify({ customerId, completedAt, nextMaintenanceAt })]
+    );
+    return { asset: updated.rows[0], maintenance: event.rows[0] };
+  });
+}
+
+export async function updateAssetStatus(db, { customerId, assetId, actorUserId, status }) {
+  return withTransaction(db, async (client) => {
+    const locked = await client.query(
+      `SELECT id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
+              maintenance_interval_months, last_maintenance_at, next_maintenance_at, status
+       FROM installed_assets WHERE id = $1 AND customer_id = $2 FOR UPDATE`,
+      [assetId, customerId]
+    );
+    const current = locked.rows[0];
+    if (!current) return null;
+    if (current.status === 'retired') throw new Error('Retired asset cannot change status');
+    if (current.status === status) return current;
+
+    const updated = await client.query(
+      `UPDATE installed_assets SET status = $3
+       WHERE id = $1 AND customer_id = $2
+       RETURNING id, customer_id, product_id, serial_number, installed_at, warranty_ends_at,
+                 maintenance_interval_months, last_maintenance_at, next_maintenance_at, status`,
+      [assetId, customerId, status]
+    );
+    await client.query(
+      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, 'asset.status_changed', 'installed_asset', $2, $3::jsonb)`,
+      [actorUserId, assetId, JSON.stringify({ customerId, from: current.status, to: status })]
+    );
+    return updated.rows[0];
+  });
+}
+
+function addUtcMonths(iso, months) {
+  const date = new Date(iso);
+  const day = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay));
+  return date.toISOString();
+}
+
 function validateEvidence(jobId, evidence) {
   if (!Array.isArray(evidence) || evidence.length === 0) throw new Error('Evidence is required before completion');
   if (evidence.length > 10) throw new Error('Too many evidence items');
@@ -156,11 +258,12 @@ function validateEvidence(jobId, evidence) {
   return evidence;
 }
 
-export async function approveSettlementAndCreditWallet(db, { settlementId, approverUserId }) {
+export async function approveSettlementAndCreditWallet(db, { settlementId, approverUserId, tenantId = null }) {
   return withTransaction(db, async (client) => {
     const locked = await client.query(
-      `SELECT * FROM technician_settlements WHERE id = $1 FOR UPDATE`,
-      [settlementId]
+      `SELECT s.* FROM technician_settlements s JOIN service_jobs j ON j.id=s.job_id
+       WHERE s.id = $1 AND ($2::uuid IS NULL OR j.organization_id=$2) FOR UPDATE`,
+      [settlementId, tenantId]
     );
     const settlement = locked.rows[0];
     if (!settlement) throw new Error('Settlement not found');
@@ -198,5 +301,56 @@ export async function approveSettlementAndCreditWallet(db, { settlementId, appro
     }
 
     return { settlement: approved, walletEntry: wallet.rows[0] };
+  });
+}
+
+export async function rejectSettlement(db, { settlementId, reason, actorUserId, tenantId = null }) {
+  return withTransaction(db, async (client) => {
+    const locked = await client.query(
+      `SELECT s.id, s.technician_id, s.payout_amount, s.status FROM technician_settlements s
+       JOIN service_jobs j ON j.id=s.job_id WHERE s.id = $1 AND ($2::uuid IS NULL OR j.organization_id=$2) FOR UPDATE`,
+      [settlementId, tenantId]
+    );
+    const settlement = locked.rows[0];
+    if (!settlement) return null;
+    if (settlement.status !== 'pending_approval') throw new Error('Settlement is not rejectable');
+    const updated = await client.query(
+      `UPDATE technician_settlements SET status = 'rejected' WHERE id = $1 RETURNING *`,
+      [settlementId]
+    );
+    await client.query(
+      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, 'settlement.rejected', 'technician_settlement', $2, $3::jsonb)`,
+      [actorUserId, settlementId, JSON.stringify({ technicianId: settlement.technician_id, payoutAmount: settlement.payout_amount, reason: reason.trim() })]
+    );
+    return updated.rows[0];
+  });
+}
+
+export async function markSettlementPaid(db, { settlementId, actorUserId, paymentReference, tenantId = null }) {
+  return withTransaction(db, async (client) => {
+    const locked = await client.query(
+      `SELECT s.id, s.technician_id, s.payout_amount, s.status FROM technician_settlements s
+       JOIN service_jobs j ON j.id=s.job_id WHERE s.id = $1 AND ($2::uuid IS NULL OR j.organization_id=$2) FOR UPDATE`,
+      [settlementId, tenantId]
+    );
+    const settlement = locked.rows[0];
+    if (!settlement) return null;
+    if (settlement.status !== 'approved') throw new Error('Settlement is not payable');
+    const updated = await client.query(
+      `UPDATE technician_settlements SET status = 'paid' WHERE id = $1 RETURNING *`,
+      [settlementId]
+    );
+    await client.query(
+      `UPDATE wallet_entries SET status = 'paid'
+       WHERE settlement_id = $1 AND entry_type = 'credit' AND status = 'available'`,
+      [settlementId]
+    );
+    await client.query(
+      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, 'settlement.paid', 'technician_settlement', $2, $3::jsonb)`,
+      [actorUserId, settlementId, JSON.stringify({ technicianId: settlement.technician_id, payoutAmount: settlement.payout_amount, paymentReference: paymentReference.trim() })]
+    );
+    return updated.rows[0];
   });
 }

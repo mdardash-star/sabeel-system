@@ -53,6 +53,8 @@ SUBIL OS هو نظام تشغيل متكامل للنشاط، وليس إضاف�
 - Backend/API
 - Worker/Queue services
 
+بوابة الفني تستخدم مخزن IndexedDB خاصًا بالنطاق لحفظ الإسقاط التشغيلي الآمن فقط، دون رقم جوال العميل. انتقالات الحالة غير المتصلة تحفظ كأوامر مرتبة وتُعاد عند عودة الشبكة؛ التعارضات النهائية لا تعاد بلا نهاية، وإغلاق المهمة المالي لا يتم دون اتصال لأنه يتطلب رفع الإثبات ومعاملة خادمية واحدة.
+
 ## 11. نطاق MVP
 Identity + Commerce integration + CRM + Field Service + Technician workflow + Notifications abstraction + Finance technician settlement + Admin dashboard + audit/event foundation.
 

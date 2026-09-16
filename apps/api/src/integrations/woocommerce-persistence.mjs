@@ -46,6 +46,21 @@ export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh' } =
       [String(order.id), customer.id, Number(order.total || 0) / 1.15]
     )).rows[0];
 
+    for (const item of order.line_items || []) {
+      const subtotalExVat = Number(item.total ?? item.subtotal ?? 0);
+      await client.query(
+        `INSERT INTO order_items
+           (order_id, external_line_item_id, product_id, sku, product_name, quantity, subtotal_ex_vat, unit_cost_snapshot)
+         SELECT $1, $2, $3, $4, $5, $6, $7, COALESCE(i.unit_cost, 0)
+         FROM (SELECT 1) seed LEFT JOIN inventory_items i ON i.sku = NULLIF($4, '')
+         ON CONFLICT (order_id, external_line_item_id) DO UPDATE SET
+           product_id = EXCLUDED.product_id, sku = EXCLUDED.sku, product_name = EXCLUDED.product_name,
+           quantity = EXCLUDED.quantity, subtotal_ex_vat = EXCLUDED.subtotal_ex_vat`,
+        [persistedOrder.id, String(item.id), item.product_id ? String(item.product_id) : null,
+          String(item.sku || ''), String(item.name || 'منتج'), Number(item.quantity || 1), subtotalExVat]
+      );
+    }
+
     const job = (await client.query(
       `INSERT INTO service_jobs (order_id, customer_id, service_location_id, city_id, status)
        VALUES ($1, $2, $3, $4, 'pending_assignment') RETURNING *`,

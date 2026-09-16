@@ -47,6 +47,13 @@ test('technician endpoint rejects inactive or unknown technician profile', async
   assert.equal(result.data.error, 'active_technician_required');
 });
 
+test('technician profile cannot cross authenticated tenant boundary',async()=>{
+  const tenantId='00000000-0000-4000-8000-000000000001';
+  const db=dbReturning([], (sql,params)=>{assert.match(sql,/u\.organization_id = \$2/);assert.deepEqual(params,['user-1',tenantId])});
+  const result=await routePersistentRequest({method:'GET',url:'/api/v1/technicians/me/jobs',role:'technician',context:{userId:'user-1',tenantId},db});
+  assert.equal(result.status,403);assert.equal(result.data.error,'active_technician_required');
+});
+
 test('non-technician cannot use technician jobs endpoint', async () => {
   const result = await routePersistentRequest({ method: 'GET', url: '/api/v1/technicians/me/jobs', role: 'customer', context: { userId: 'user-1' }, db: dbReturning([]) });
   assert.equal(result.status, 403);

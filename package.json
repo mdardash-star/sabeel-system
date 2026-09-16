@@ -5,6 +5,14 @@
   "description": "SUBIL OS business operating platform",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
+    "dev:admin": "npm run dev --workspace @subil/admin",
+    "dev:technician": "npm run dev --workspace @subil/technician",
+    "dev:mobile": "npm run dev --workspace @subil/mobile",
+    "worker:push": "npm run worker:push --workspace @subil/api",
+    "build": "npm run build:admin && npm run build:technician && npm run build:mobile",
+    "build:admin": "npm run build --workspace @subil/admin",
+    "build:technician": "npm run build --workspace @subil/technician",
+    "build:mobile": "npm run build --workspace @subil/mobile",
     "typecheck": "tsc --noEmit",
     "test": "node --test"
   },

@@ -1,12 +1,15 @@
 {
   "entities": {
-    "users": ["id", "mobile", "role", "isActive", "createdAt"],
-    "customers": ["id", "userId", "name", "createdAt"],
+    "organizations": ["id", "slug", "name", "isActive", "createdAt"],
+    "users": ["id", "organizationId", "mobile", "role", "isActive", "createdAt"],
+    "customers": ["id", "organizationId", "userId", "name", "createdAt"],
     "serviceLocations": ["id", "customerId", "cityId", "addressText", "latitude", "longitude"],
     "technicians": ["id", "userId", "cityId", "branchId", "compensationPolicyId", "isActive"],
     "orders": ["id", "externalSource", "externalOrderId", "customerId", "paidAt", "totalExVat"],
-    "serviceJobs": ["id", "orderId", "customerId", "serviceLocationId", "cityId", "technicianId", "status", "scheduledAt", "completedAt"],
+    "serviceJobs": ["id", "organizationId", "orderId", "customerId", "serviceLocationId", "cityId", "technicianId", "status", "scheduledAt", "completedAt"],
     "jobEvidence": ["id", "jobId", "mediaType", "storageKey", "createdAt"],
+    "installedAssets": ["id", "customerId", "productId", "serialNumber", "installedAt", "warrantyEndsAt", "maintenanceIntervalMonths", "lastMaintenanceAt", "nextMaintenanceAt", "status"],
+    "assetMaintenanceEvents": ["id", "assetId", "completedAt", "notes", "performedBy", "createdAt"],
     "technicianSettlements": ["id", "jobId", "technicianId", "saleExVat", "productCost", "otherCosts", "margin", "policyVersion", "commissionRate", "fixedAmount", "payoutAmount", "status"],
     "auditLog": ["id", "actorUserId", "action", "entityType", "entityId", "data", "createdAt"]
   },
@@ -14,6 +17,7 @@
     "uniqueOrderSourceId": true,
     "technicianCustomerPhoneExposure": false,
     "settlementKeepsPolicyVersion": true,
-    "sensitiveMutationsAreAudited": true
+    "sensitiveMutationsAreAudited": true,
+    "tenantComesFromAuthenticatedSession": true
   }
 }
