@@ -565,6 +565,45 @@ export function createRepositories(db) {
       }
     },
 
+    reports: {
+      async profitability(from, to) {
+        const base = `FROM orders o JOIN customers c ON c.id = o.customer_id
+          LEFT JOIN LATERAL (SELECT COALESCE(SUM(quantity * unit_cost_snapshot), 0) AS product_cost FROM order_items WHERE order_id = o.id) items ON true
+          LEFT JOIN order_costs oc ON oc.order_id = o.id
+          LEFT JOIN LATERAL (SELECT COALESCE(SUM(ts.payout_amount) FILTER (WHERE ts.status <> 'rejected'), 0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id = j.id WHERE j.order_id = o.id) pay ON true
+          LEFT JOIN LATERAL (SELECT city_id FROM service_jobs WHERE order_id = o.id ORDER BY created_at LIMIT 1) job ON true
+          WHERE o.paid_at >= $1 AND o.paid_at < $2`;
+        const [summary, trend, channels, cities, products, orders] = await Promise.all([
+          db.query(`SELECT COUNT(*)::integer AS order_count, COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
+            COALESCE(SUM(items.product_cost),0)::numeric(14,2) AS product_cost,
+            COALESCE(SUM(COALESCE(oc.other_costs,0)),0)::numeric(14,2) AS other_costs,
+            COALESCE(SUM(pay.payout),0)::numeric(14,2) AS technician_payout,
+            COALESCE(SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout),0)::numeric(14,2) AS net_profit
+            ${base}`, [from, to]),
+          db.query(`SELECT date_trunc('day', o.paid_at)::date AS period, COUNT(*)::integer AS orders,
+            SUM(o.total_ex_vat)::numeric(14,2) AS revenue,
+            SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS profit
+            ${base} GROUP BY 1 ORDER BY 1`, [from, to]),
+          db.query(`SELECT o.external_source AS name, COUNT(*)::integer AS orders, SUM(o.total_ex_vat)::numeric(14,2) AS revenue,
+            SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS profit
+            ${base} GROUP BY o.external_source ORDER BY revenue DESC`, [from, to]),
+          db.query(`SELECT COALESCE(job.city_id,'غير محدد') AS name, COUNT(*)::integer AS orders, SUM(o.total_ex_vat)::numeric(14,2) AS revenue,
+            SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS profit
+            ${base} GROUP BY COALESCE(job.city_id,'غير محدد') ORDER BY revenue DESC`, [from, to]),
+          db.query(`SELECT oi.product_name AS name, oi.sku, SUM(oi.quantity)::numeric(12,2) AS units,
+            SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
+            SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot))::numeric(14,2) AS gross_profit
+            FROM order_items oi JOIN orders o ON o.id=oi.order_id
+            WHERE o.paid_at >= $1 AND o.paid_at < $2 GROUP BY oi.product_name,oi.sku ORDER BY revenue DESC LIMIT 20`, [from, to]),
+          db.query(`SELECT o.id,o.external_order_id,o.external_source,o.paid_at,o.total_ex_vat,c.name AS customer_name,
+            COALESCE(job.city_id,'غير محدد') AS city_id,items.product_cost,COALESCE(oc.other_costs,0) AS other_costs,pay.payout AS technician_payout,
+            (o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS net_profit
+            ${base} ORDER BY o.paid_at DESC LIMIT 50`, [from, to])
+        ]);
+        return { summary: summary.rows[0], trend: trend.rows, channels: channels.rows, cities: cities.rows, products: products.rows, orders: orders.rows };
+      }
+    },
+
     purchasing: {
       async stats() {
         const { rows } = await db.query(
