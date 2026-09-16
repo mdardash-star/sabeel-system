@@ -104,7 +104,7 @@ export default function CustomersPage() {
   }
 
   return <PreviewAuthGuard><main className="customers-page">
-    <header className="customers-top"><a className="customers-brand" href="/"><span>S</span><strong>سبيل</strong><small>نظام التشغيل</small></a><nav className="section-nav" aria-label="تنقل الأقسام"><a href="/">لوحة التحكم</a><a href="/jobs">المهام</a><a className="active" href="/customers">العملاء</a><a href="/technicians">الفنيون</a><a href="/maintenance">الصيانة</a><a href="/finance">المالية</a></nav><div className="profile-avatar">م</div></header>
+    <header className="customers-top"><a className="customers-brand" href="/"><span>S</span><strong>سبيل</strong><small>نظام التشغيل</small></a><nav className="section-nav" aria-label="تنقل الأقسام"><a href="/">لوحة التحكم</a><a href="/jobs">المهام</a><a className="active" href="/customers">العملاء</a><a href="/technicians">الفنيون</a><a href="/maintenance">الصيانة</a><a href="/finance">المالية</a><a href="/inventory">المخزون</a></nav><div className="profile-avatar">م</div></header>
     <div className="customers-wrap">
       <div className="demo-notice"><span>نسخة المعاينة</span> بيانات العملاء تجريبية ولا تؤثر على متجر سبيل المباشر.</div>
       <div className="page-head"><div><p>إدارة علاقات العملاء</p><h1>العملاء</h1><span>عرض بيانات العملاء وسجل طلباتهم</span></div><button className="primary-button" onClick={()=>setOpen(true)}><span>+</span> إضافة عميل</button></div>
