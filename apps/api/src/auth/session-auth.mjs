@@ -7,13 +7,15 @@ export async function authenticateBearer(db, authorization, now = new Date()) {
 
   const tokenHash = createHash('sha256').update(token).digest('hex');
   const { rows } = await db.query(
-    `SELECT u.id AS user_id, u.role
+    `SELECT u.id AS user_id, u.role, u.organization_id
      FROM auth_sessions s
      JOIN users u ON u.id = s.user_id
+     JOIN organizations o ON o.id = u.organization_id
      WHERE s.token_hash = $1
        AND s.expires_at > $2
        AND s.revoked_at IS NULL
        AND u.is_active = true
+       AND o.is_active = true
      LIMIT 1`,
     [tokenHash, now.toISOString()]
   );
