@@ -63,6 +63,8 @@ OTP uses normalized Saudi E.164 mobile numbers (`+9665XXXXXXXX`), six-digit code
 - POST `/technicians/me/jobs/:id/complete` — atomically saves evidence, completes the owned job, and creates a pending settlement from server-side order costs and compensation policy
 - GET `/technicians/me/wallet?limit=20&offset=0` — PostgreSQL-backed balance and paginated ledger scoped to the signed-in technician
 
+تستهلك بوابة الفني PWA هذه المسارات بجلسة OTP خاصة بدور `technician`. لا تعرض البوابة رقم العميل، ولا تسمح بإغلاق المهمة دون إثبات، ولا تخزن تغييرات تشغيلية وهمية أثناء انقطاع الاتصال.
+
 The signed-in user is resolved to an active technician profile server-side. Job lists are read from PostgreSQL and expose operational location fields only; customer contact fields are never selected.
 
 ## Assets / Maintenance
