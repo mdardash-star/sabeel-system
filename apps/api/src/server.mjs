@@ -6,6 +6,7 @@ import { routeTenantReadRequest } from './http/tenant-read-router.mjs';
 import { routeUserAdminRequest } from './http/user-admin-router.mjs';
 import { createDatabase } from './persistence/database.mjs';
 import { authenticateBearer } from './auth/session-auth.mjs';
+import { requestOtp } from './auth/otp-service.mjs';
 import { tenantContext } from './auth/tenant-context.mjs';
 import { routeAuthRequest } from './http/auth-router.mjs';
 import { createOtpSender } from './integrations/otp-sender.mjs';
@@ -89,9 +90,27 @@ export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } 
 }
 
 export function createApiServer({ db = createDatabase(), auth = {}, corsOrigins = parseCorsOrigins(process.env.SUBIL_ADMIN_ORIGINS) } = {}) {
+  const otpTestMode = String(process.env.SUBIL_OTP_TEST_MODE || '').toLowerCase() === 'true';
+  if (otpTestMode && process.env.NODE_ENV === 'production') {
+    throw new Error('OTP test mode cannot run in production');
+  }
+  const testCode = String(process.env.SUBIL_OTP_TEST_CODE || '123456');
+  if (otpTestMode && !/^\d{6}$/.test(testCode)) {
+    throw new Error('SUBIL_OTP_TEST_CODE must be exactly 6 digits');
+  }
+
+  const sendOtp = otpTestMode
+    ? async ({ mobile, code, expiresInSeconds }) => {
+        console.log(JSON.stringify({ event: 'otp.test_delivery', mobile, code, expiresInSeconds }));
+      }
+    : createOtpSender();
+
   const runtimeAuth = {
     hashSecret: process.env.OTP_HASH_SECRET,
-    sendOtp: createOtpSender(),
+    sendOtp,
+    ...(otpTestMode ? {
+      requestOtp: (args) => requestOtp({ ...args, codeFactory: () => testCode })
+    } : {}),
     ...auth
   };
   return http.createServer(createRequestHandler({ db, auth: runtimeAuth, corsOrigins }));
