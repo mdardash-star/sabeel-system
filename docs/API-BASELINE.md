@@ -125,6 +125,8 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 
 Push delivery is opt-in per browser. Marketing defaults to disabled, while service and maintenance updates default to enabled. Pending events are materialized idempotently per active subscription and can be processed with row locking for safe worker concurrency.
 
+The push worker claims deliveries with `SKIP LOCKED`, sends through the configured provider adapter, retries transient failures with bounded exponential backoff, deactivates endpoints returning `404/410`, and derives the parent event status from all device deliveries. Run it separately with `npm run worker:push`.
+
 ## Marketing
 - GET `/marketing/stats` — campaign and recipient delivery counters
 - GET/POST `/marketing/segments` — reusable dynamic segments: all, repeat, dormant 90 days, maintenance due 30 days and high value
