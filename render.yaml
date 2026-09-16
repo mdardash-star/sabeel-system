@@ -1,0 +1,57 @@
+databases:
+  - name: subil-postgres
+    databaseName: subil
+    user: subil
+
+services:
+  - type: web
+    name: subil-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile.api
+    healthCheckPath: /health
+    preDeployCommand: npm run migrate --workspace @subil/api
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: DATABASE_URL
+        fromDatabase:
+          name: subil-postgres
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "true"
+      - key: DATABASE_POOL_MAX
+        value: "10"
+      - key: DATABASE_IDLE_TIMEOUT_MS
+        value: "30000"
+      - key: DATABASE_CONNECT_TIMEOUT_MS
+        value: "5000"
+      - key: OTP_HASH_SECRET
+        sync: false
+      - key: OTP_SENDER_URL
+        sync: false
+      - key: OTP_SENDER_API_KEY
+        sync: false
+      - key: SUBIL_ADMIN_ORIGINS
+        sync: false
+      - key: PUSH_PROVIDER_URL
+        sync: false
+      - key: PUSH_PROVIDER_API_KEY
+        sync: false
+      - key: PUSH_VAPID_PUBLIC_KEY
+        sync: false
+      - key: PUSH_BATCH_SIZE
+        value: "50"
+      - key: PUSH_WORKER_INTERVAL_MS
+        value: "15000"
+
+  - type: web
+    name: subil-admin
+    runtime: docker
+    dockerfilePath: ./Dockerfile.admin
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SUBIL_API_URL
+        sync: false
