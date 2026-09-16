@@ -22,6 +22,8 @@ function fakePool({ duplicate = false } = {}) {
       if (/INSERT INTO service_locations/.test(sql)) return { rows: [{ id: 'l1' }] };
       if (/INSERT INTO orders/.test(sql)) return { rows: [{ id: 'o1', external_order_id: '9001' }] };
       if (/INSERT INTO order_items/.test(sql)) return { rows: [] };
+      if (/SUM\(quantity \* unit_cost_snapshot\)/.test(sql)) return { rows: [{ product_cost: '320.00' }] };
+      if (/INSERT INTO order_costs/.test(sql)) return { rows: [] };
       if (/INSERT INTO service_jobs/.test(sql)) return { rows: [{ id: 'j1', status: 'pending_assignment' }] };
       if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
       throw new Error(`Unexpected query: ${sql}`);
@@ -31,15 +33,17 @@ function fakePool({ duplicate = false } = {}) {
   return { pool: { connect: async () => client }, calls, customerCreated: () => customerCreated };
 }
 
-test('paid WooCommerce service order creates customer order and pending job atomically', async () => {
+test('paid WooCommerce service order creates customer order pending job and finance snapshot atomically', async () => {
   const f = fakePool();
   const result = await persistPaidServiceOrder(f.pool, paidOrder, { cityId: 'riyadh' });
   assert.equal(result.job.status, 'pending_assignment');
   assert.equal(result.duplicate, false);
+  assert.equal(result.productCost, 320);
   assert.equal(f.customerCreated(), true);
   assert.ok(f.calls.some(c => /woocommerce\.service_job_created/.test(c.sql)));
   assert.ok(f.calls.some(c => /INSERT INTO order_items/.test(c.sql) && c.params[1] === '1'));
   assert.ok(f.calls.some(c => /INSERT INTO order_items/.test(c.sql) && c.params[3] === 'RO-7-STAGE' && c.params[6] === 500));
+  assert.ok(f.calls.some(c => /INSERT INTO order_costs/.test(c.sql) && c.params[1] === 320));
   assert.ok(f.calls.some(c => c.sql === 'COMMIT'));
 });
 
