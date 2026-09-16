@@ -83,7 +83,7 @@ export default function Dashboard() {
         <nav className="nav" aria-label="التنقل الرئيسي">
           <p className="nav-label">القائمة الرئيسية</p>
           {navItems.map((item) => (
-            <a className={`nav-item${item.active ? " active" : ""}`} href={item.icon === "orders" ? "/jobs" : item.icon === "customers" ? "/customers" : item.icon === "tech" ? "/technicians" : item.icon === "calendar" ? "/maintenance" : item.icon === "wallet" ? "/finance" : "#"} key={item.label}>
+            <a className={`nav-item${item.active ? " active" : ""}`} href={item.icon === "orders" ? "/jobs" : item.icon === "customers" ? "/customers" : item.icon === "tech" ? "/technicians" : item.icon === "calendar" ? "/maintenance" : item.icon === "wallet" ? "/finance" : item.icon === "inventory" ? "/inventory" : "#"} key={item.label}>
               <Icon name={item.icon} /><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}
             </a>
           ))}
@@ -158,7 +158,7 @@ export default function Dashboard() {
                 <a className="quick-action-link" href="/maintenance"><span className="blue"><Icon name="calendar"/></span><strong>مركز الصيانة</strong><small>متابعة الاستحقاقات</small></a>
                 <a className="quick-action-link" href="/customers"><span className="green"><Icon name="customers"/></span><strong>إضافة عميل</strong><small>تسجيل عميل جديد</small></a>
                 <a className="quick-action-link" href="/finance"><span className="amber"><Icon name="wallet"/></span><strong>اعتماد مستحقات</strong><small>٤ بانتظار الاعتماد</small></a>
-                <button><span className="violet"><Icon name="reports"/></span><strong>تقرير الأداء</strong><small>عرض التقرير الأسبوعي</small></button>
+                <a className="quick-action-link" href="/inventory"><span className="violet"><Icon name="inventory"/></span><strong>مركز المخزون</strong><small>الأرصدة والحركات</small></a>
               </div>
             </article>
           </section>
