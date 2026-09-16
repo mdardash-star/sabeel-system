@@ -42,6 +42,7 @@ test('requests and verifies OTP then creates a hashed PostgreSQL session', async
     tokenFactory: () => sessionToken
   });
   assert.equal(verified.user.role, 'admin');
+  assert.equal(verified.user.organizationId, '00000000-0000-4000-8000-000000000001');
   assert.equal(verified.token, sessionToken);
   assert.equal(state.sessionParams[1], createHash('sha256').update(sessionToken).digest('hex'));
   assert.notEqual(state.sessionParams[1], sessionToken);
@@ -96,7 +97,7 @@ function createAuthClient(state) {
       if (/SELECT id, code_hash/.test(sql)) return { rows: state.challenge && !state.challenge.consumed ? [state.challenge] : [] };
       if (/SET attempts =/.test(sql)) { state.invalidAttempts += 1; state.challenge.attempts += 1; return { rows: [] }; }
       if (/SET consumed_at/.test(sql)) { state.challenge.consumed = true; return { rows: [] }; }
-      if (/SELECT id, role, is_active FROM users/.test(sql)) return { rows: [{ id: 'user-1', role: 'admin', is_active: true }] };
+      if (/SELECT id, role, is_active, organization_id FROM users/.test(sql)) return { rows: [{ id: 'user-1', role: 'admin', is_active: true, organization_id: '00000000-0000-4000-8000-000000000001' }] };
       if (/INSERT INTO auth_sessions/.test(sql)) { state.sessionParams = params; return { rows: [] }; }
       if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
       throw new Error(`Unexpected SQL: ${sql}`);
