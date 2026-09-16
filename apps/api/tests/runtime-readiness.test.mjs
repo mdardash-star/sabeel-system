@@ -20,11 +20,17 @@ test('production runtime is ready when required secrets and origins are configur
   assert.deepEqual(result.errors,[]);
 });
 
-test('production runtime rejects placeholders and missing cors origin',()=>{
-  const result=validateRuntimeReadiness({...valid,OTP_SENDER_URL:'https://sms-provider.example.com/send-template',SUBIL_ADMIN_ORIGINS:''});
+test('production runtime can start without otp sender and reports degraded auth warning',()=>{
+  const result=validateRuntimeReadiness({...valid,OTP_SENDER_URL:'',OTP_SENDER_API_KEY:''});
+  assert.equal(result.ready,true);
+  assert.ok(result.warnings.some(x=>x.includes('OTP sender is not configured')));
+});
+
+test('production runtime treats placeholder otp sender as warning but still requires cors origin',()=>{
+  const result=validateRuntimeReadiness({...valid,OTP_SENDER_URL:'https://sms-provider.example.com/send-template',OTP_SENDER_API_KEY:'replace-with-provider-api-key',SUBIL_ADMIN_ORIGINS:''});
   assert.equal(result.ready,false);
-  assert.ok(result.errors.some(x=>x.includes('OTP_SENDER_URL')));
   assert.ok(result.errors.some(x=>x.includes('SUBIL_ADMIN_ORIGINS')));
+  assert.ok(result.warnings.some(x=>x.includes('OTP sender settings contain placeholders')));
 });
 
 test('runtime rejects short otp hash secret',()=>{
