@@ -5,7 +5,7 @@ import { persistPaidServiceOrder } from '../src/integrations/woocommerce-persist
 const paidOrder = {
   id: 9001, status: 'processing', customer_id: 77, total: '575.00',
   billing: { first_name: 'Test', last_name: 'Customer', email: 'test@example.com', phone: '+966500000001', address_1: 'Riyadh', city: 'Riyadh' },
-  line_items: [{ id: 1, name: 'Aqua Gold', quantity: 1, meta_data: [{ key: '_subil_requires_service', value: 'yes' }] }]
+  line_items: [{ id: 1, name: 'Aqua Gold', sku: 'RO-7-STAGE', quantity: 1, total: '500.00', meta_data: [{ key: '_subil_requires_service', value: 'yes' }] }]
 };
 
 function fakePool({ duplicate = false } = {}) {
@@ -21,6 +21,7 @@ function fakePool({ duplicate = false } = {}) {
       if (/customer_external_identities/.test(sql)) return { rows: [] };
       if (/INSERT INTO service_locations/.test(sql)) return { rows: [{ id: 'l1' }] };
       if (/INSERT INTO orders/.test(sql)) return { rows: [{ id: 'o1', external_order_id: '9001' }] };
+      if (/INSERT INTO order_items/.test(sql)) return { rows: [] };
       if (/INSERT INTO service_jobs/.test(sql)) return { rows: [{ id: 'j1', status: 'pending_assignment' }] };
       if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
       throw new Error(`Unexpected query: ${sql}`);
@@ -37,6 +38,8 @@ test('paid WooCommerce service order creates customer order and pending job atom
   assert.equal(result.duplicate, false);
   assert.equal(f.customerCreated(), true);
   assert.ok(f.calls.some(c => /woocommerce\.service_job_created/.test(c.sql)));
+  assert.ok(f.calls.some(c => /INSERT INTO order_items/.test(c.sql) && c.params[1] === '1'));
+  assert.ok(f.calls.some(c => /INSERT INTO order_items/.test(c.sql) && c.params[3] === 'RO-7-STAGE' && c.params[6] === 500));
   assert.ok(f.calls.some(c => c.sql === 'COMMIT'));
 });
 
