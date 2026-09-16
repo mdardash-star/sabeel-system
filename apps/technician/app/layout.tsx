@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./push.css";
 
 export const metadata: Metadata = {
   title: "سبيل | بوابة الفني",
