@@ -597,6 +597,21 @@ export function createRepositories(db) {
              COUNT(*) FILTER(WHERE status='failed') AS failed FROM campaign_recipients WHERE campaign_id=mc.id) r ON true
            WHERE ($1='all' OR mc.status=$1) ORDER BY mc.created_at DESC LIMIT $2 OFFSET $3`,[status,limit,offset]
         ); return rows;
+      },
+      async abandonedStats() {
+        const {rows}=await db.query(`SELECT COUNT(*) FILTER(WHERE status IN('open','notified'))::integer AS active,
+          COUNT(*) FILTER(WHERE status='recovered')::integer AS recovered,COUNT(*) FILTER(WHERE status='notified')::integer AS notified,
+          COALESCE(SUM(cart_value) FILTER(WHERE status IN('open','notified')),0)::numeric(14,2) AS at_risk_value,
+          COALESCE(SUM(cart_value) FILTER(WHERE status='recovered'),0)::numeric(14,2) AS recovered_value,
+          CASE WHEN COUNT(*) FILTER(WHERE status IN('notified','recovered'))=0 THEN 0 ELSE
+          ROUND(COUNT(*) FILTER(WHERE status='recovered')::numeric/COUNT(*) FILTER(WHERE status IN('notified','recovered'))*100,1) END AS recovery_rate
+          FROM abandoned_carts`);return rows[0];
+      },
+      async abandonedCarts({status='active',limit=20,offset=0}={}) {
+        const {rows}=await db.query(`SELECT ac.*,c.name AS linked_customer_name,COUNT(*) OVER()::integer AS total_count
+          FROM abandoned_carts ac LEFT JOIN customers c ON c.id=ac.customer_id
+          WHERE CASE $1 WHEN 'active' THEN ac.status IN('open','notified') WHEN 'all' THEN true ELSE ac.status=$1 END
+          ORDER BY CASE WHEN ac.status IN('open','notified') THEN 0 ELSE 1 END,ac.abandoned_at DESC LIMIT $2 OFFSET $3`,[status,limit,offset]);return rows;
       }
     },
 
