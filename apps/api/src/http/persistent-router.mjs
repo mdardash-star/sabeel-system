@@ -4,6 +4,7 @@ import { approveSettlementAndCreditWallet, completeAssetMaintenance, completeTec
 import { assignPersistentJob, listDispatchCandidates, reassignPersistentJob } from '../dispatch/persistent-dispatch.mjs';
 import { detectJobEscalations, resolveJobEscalations } from '../jobs/escalations.mjs';
 import { createInventoryItem, issueInventoryToTechnician, receiveInventory, transferInventory } from '../inventory/operations.mjs';
+import { approvePurchaseOrder, createPurchaseOrder, createSupplier, receivePurchaseOrder } from '../purchasing/operations.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
   if (!db?.query) return response(503, { error: 'database_unavailable' });
@@ -172,6 +173,68 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     if (!can(role, 'inventory:read')) return response(403, { error: 'forbidden' });
     const stats = await createRepositories(db).inventory.stats();
     return response(200, { stats });
+  }
+
+  if (method === 'GET' && url === '/api/v1/purchasing/stats') {
+    if (!can(role, 'purchasing:read')) return response(403, { error: 'forbidden' });
+    return response(200, { stats: await createRepositories(db).purchasing.stats() });
+  }
+
+  if (method === 'GET' && url === '/api/v1/purchasing/suppliers') {
+    if (!can(role, 'purchasing:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context);
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    const rows = await createRepositories(db).purchasing.suppliers({ ...pagination, query: context.query || '' });
+    return response(200, { suppliers: rows.map(({ total_count, ...supplier }) => supplier), pagination: { ...pagination, total: rows[0]?.total_count || 0 } });
+  }
+
+  if (method === 'GET' && url === '/api/v1/purchasing/orders') {
+    if (!can(role, 'purchasing:read')) return response(403, { error: 'forbidden' });
+    const pagination = parsePagination(context), status = context.status || 'all';
+    if (!pagination) return response(400, { error: 'invalid_pagination' });
+    if (!['all','draft','approved','partially_received','received','cancelled','overdue'].includes(status)) return response(400, { error: 'invalid_purchase_order_status' });
+    const rows = await createRepositories(db).purchasing.list({ ...pagination, status, query: context.query || '' });
+    return response(200, { orders: rows.map(({ total_count, ...order }) => order), pagination: { ...pagination, total: rows[0]?.total_count || 0 }, status });
+  }
+
+  if (method === 'POST' && url === '/api/v1/purchasing/suppliers') {
+    if (!can(role, 'purchasing:update')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    const name = cleanOptional(body.name), contactName = cleanOptional(body.contactName), mobile = cleanOptional(body.mobile), email = cleanOptional(body.email), vatNumber = cleanOptional(body.vatNumber);
+    if (name.length < 2 || name.length > 200 || contactName.length > 200 || mobile.length > 30 || email.length > 200 || vatNumber.length > 30) return response(400, { error: 'invalid_supplier' });
+    try { return response(201, { supplier: await createSupplier(db, { name, contactName, mobile, email, vatNumber, actorUserId: context.userId }) }); }
+    catch (error) { if (error.code === '23505') return response(409, { error: 'supplier_exists' }); throw error; }
+  }
+
+  if (method === 'POST' && url === '/api/v1/purchasing/orders') {
+    if (!can(role, 'purchasing:update')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    const poNumber = cleanOptional(body.poNumber).toUpperCase(), supplierId = cleanOptional(body.supplierId), warehouseId = cleanOptional(body.warehouseId), notes = cleanOptional(body.notes);
+    const expectedAt = body.expectedAt ? parseDate(body.expectedAt) : null, items = Array.isArray(body.items) ? body.items.map(item => ({ itemId: cleanOptional(item.itemId), quantity: Number(item.quantity), unitCost: Number(item.unitCost) })) : [];
+    if (poNumber.length < 2 || poNumber.length > 80 || !supplierId || !warehouseId || (body.expectedAt && !expectedAt) || notes.length > 1000 || items.length < 1 || items.length > 100 || new Set(items.map(item=>item.itemId)).size !== items.length || items.some(item=>!item.itemId || !validInventoryNumber(item.quantity, false) || !validInventoryNumber(item.unitCost, true))) return response(400, { error: 'invalid_purchase_order' });
+    try { return response(201, await createPurchaseOrder(db, { poNumber, supplierId, warehouseId, expectedAt, notes, items, actorUserId: context.userId })); }
+    catch (error) { if (error.code === '23505') return response(409, { error: 'purchase_order_exists' }); if (error.message.includes('not found')) return response(404, { error: 'purchasing_target_not_found' }); throw error; }
+  }
+
+  const purchaseActionMatch = url.match(/^\/api\/v1\/purchasing\/orders\/([^/]+)\/(approve|receive)$/);
+  if (method === 'POST' && purchaseActionMatch) {
+    if (!can(role, 'purchasing:update')) return response(403, { error: 'forbidden' });
+    if (!context.userId) return response(401, { error: 'user_identity_required' });
+    try {
+      if (purchaseActionMatch[2] === 'approve') {
+        const order = await approvePurchaseOrder(db, { purchaseOrderId: purchaseActionMatch[1], actorUserId: context.userId });
+        return order ? response(200, { order }) : response(404, { error: 'purchase_order_not_found' });
+      }
+      const lines = Array.isArray(body.lines) ? body.lines.map(line => ({ purchaseOrderItemId: cleanOptional(line.purchaseOrderItemId), quantity: Number(line.quantity) })) : [];
+      const notes = cleanOptional(body.notes);
+      if (!lines.length || lines.length > 100 || notes.length > 500 || new Set(lines.map(line=>line.purchaseOrderItemId)).size !== lines.length || lines.some(line=>!line.purchaseOrderItemId || !validInventoryNumber(line.quantity, false))) return response(400, { error: 'invalid_purchase_receipt' });
+      const order = await receivePurchaseOrder(db, { purchaseOrderId: purchaseActionMatch[1], lines, notes, actorUserId: context.userId });
+      return order ? response(200, { order }) : response(404, { error: 'purchase_order_not_found' });
+    } catch (error) {
+      if (error.message.includes('not approvable') || error.message.includes('not receivable') || error.message.includes('over-receipt')) return response(409, { error: 'purchase_order_conflict', message: error.message });
+      if (error.message.includes('Invalid purchase')) return response(400, { error: 'invalid_purchase_receipt' });
+      throw error;
+    }
   }
 
   if (method === 'GET' && url === '/api/v1/inventory') {
