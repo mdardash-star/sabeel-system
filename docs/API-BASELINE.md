@@ -111,6 +111,13 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - POST `/notifications/events`
 - GET `/notifications/deliveries/:id`
 
+## Marketing
+- GET `/marketing/stats` — campaign and recipient delivery counters
+- GET/POST `/marketing/segments` — reusable dynamic segments: all, repeat, dormant 90 days, maintenance due 30 days and high value
+- GET `/marketing/audience-preview?segmentType=...` — current audience size and ten preview customers
+- GET/POST `/marketing/campaigns` — campaign worklist and draft/scheduled creation
+- POST `/marketing/campaigns/:id/launch` — materializes the current segment into auditable pending notification events without calling an external provider directly
+
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`
 - POST `/webhooks/payments/:provider`
