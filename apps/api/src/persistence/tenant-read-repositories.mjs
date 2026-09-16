@@ -91,6 +91,86 @@ export function createTenantReadRepositories(db, tenantId) {
           [tenantId,query.trim(),status,limit,offset]);
         return rows;
       }
+    },
+
+    marketing: {
+      async stats() {
+        const { rows } = await db.query(`SELECT COUNT(*)::integer AS total,
+          COUNT(*) FILTER (WHERE mc.status='draft')::integer AS drafts,
+          COUNT(*) FILTER (WHERE mc.status='scheduled')::integer AS scheduled,
+          COUNT(*) FILTER (WHERE mc.status='queued')::integer AS queued,
+          COALESCE(SUM(recipients.total),0)::integer AS total_recipients,
+          COALESCE(SUM(recipients.sent),0)::integer AS sent
+          FROM marketing_campaigns mc LEFT JOIN LATERAL (
+            SELECT COUNT(*)::integer AS total,COUNT(*) FILTER (WHERE status='sent')::integer AS sent
+            FROM campaign_recipients WHERE organization_id=$1 AND campaign_id=mc.id
+          ) recipients ON true WHERE mc.organization_id=$1`, [tenantId]);
+        return rows[0];
+      },
+      async segments() {
+        const { rows } = await db.query(`SELECT cs.*,COUNT(mc.id)::integer AS campaign_count FROM customer_segments cs
+          LEFT JOIN marketing_campaigns mc ON mc.segment_id=cs.id AND mc.organization_id=$1
+          WHERE cs.organization_id=$1 AND cs.is_active GROUP BY cs.id ORDER BY cs.created_at DESC`, [tenantId]);
+        return rows;
+      },
+      async campaigns({status='all',limit=20,offset=0}={}) {
+        const { rows } = await db.query(`SELECT mc.*,cs.name AS segment_name,cs.segment_type,
+          COALESCE(r.total,0)::integer AS recipient_count,COALESCE(r.sent,0)::integer AS sent_count,
+          COALESCE(r.failed,0)::integer AS failed_count,COUNT(*) OVER()::integer AS total_count
+          FROM marketing_campaigns mc JOIN customer_segments cs ON cs.id=mc.segment_id AND cs.organization_id=$1
+          LEFT JOIN LATERAL (SELECT COUNT(*) AS total,COUNT(*) FILTER(WHERE status='sent') AS sent,
+            COUNT(*) FILTER(WHERE status='failed') AS failed FROM campaign_recipients WHERE organization_id=$1 AND campaign_id=mc.id) r ON true
+          WHERE mc.organization_id=$1 AND ($2='all' OR mc.status=$2) ORDER BY mc.created_at DESC LIMIT $3 OFFSET $4`,
+          [tenantId,status,limit,offset]);
+        return rows;
+      },
+      async conversationStats() {
+        const { rows } = await db.query(`SELECT COUNT(*) FILTER(WHERE status<>'closed')::integer AS active,
+          COUNT(*) FILTER(WHERE status='pending_agent')::integer AS pending_agent,
+          COUNT(*) FILTER(WHERE status='waiting_customer')::integer AS waiting_customer,
+          COUNT(*) FILTER(WHERE priority IN('high','urgent')AND status<>'closed')::integer AS priority,
+          COALESCE(SUM(unread_count),0)::integer AS unread FROM customer_conversations WHERE organization_id=$1`, [tenantId]);
+        return rows[0];
+      },
+      async conversations({status='active',channel='all',query='',limit=20,offset=0}={}) {
+        const { rows } = await db.query(`SELECT cc.*,c.name AS customer_name,u.mobile AS assigned_mobile,
+          last_message.body AS last_message,last_message.direction AS last_direction,COUNT(*)OVER()::integer AS total_count
+          FROM customer_conversations cc LEFT JOIN customers c ON c.id=cc.customer_id AND c.organization_id=$1
+          LEFT JOIN users u ON u.id=cc.assigned_to AND u.organization_id=$1
+          LEFT JOIN LATERAL(SELECT body,direction FROM conversation_messages WHERE organization_id=$1 AND conversation_id=cc.id ORDER BY sent_at DESC,id DESC LIMIT 1)last_message ON true
+          WHERE cc.organization_id=$1 AND CASE $2 WHEN 'active'THEN cc.status<>'closed' WHEN 'all'THEN true ELSE cc.status=$2 END
+          AND($3='all'OR cc.channel=$3)AND($4=''OR COALESCE(c.name,'')ILIKE '%'||$4||'%'OR cc.contact_handle ILIKE '%'||$4||'%'OR cc.subject ILIKE '%'||$4||'%')
+          ORDER BY CASE cc.priority WHEN 'urgent'THEN 0 WHEN 'high'THEN 1 WHEN 'normal'THEN 2 ELSE 3 END,cc.last_message_at DESC LIMIT $5 OFFSET $6`,
+          [tenantId,status,channel,query,limit,offset]);
+        return rows;
+      },
+      async conversationThread(id) {
+        const conversation=(await db.query(`SELECT cc.*,c.name AS customer_name,u.mobile AS assigned_mobile
+          FROM customer_conversations cc LEFT JOIN customers c ON c.id=cc.customer_id AND c.organization_id=$1
+          LEFT JOIN users u ON u.id=cc.assigned_to AND u.organization_id=$1 WHERE cc.organization_id=$1 AND cc.id=$2`,[tenantId,id])).rows[0];
+        if(!conversation)return null;
+        const messages=(await db.query(`SELECT cm.*,u.mobile AS agent_mobile FROM conversation_messages cm
+          LEFT JOIN users u ON u.id=cm.sent_by AND u.organization_id=$1 WHERE cm.organization_id=$1 AND cm.conversation_id=$2 ORDER BY cm.sent_at ASC,cm.id ASC`,[tenantId,id])).rows;
+        return {conversation,messages};
+      }
+    },
+
+    ai: {
+      async stats(){const{rows}=await db.query(`SELECT COUNT(*) FILTER(WHERE status='draft')::integer AS pending_review,COUNT(*) FILTER(WHERE status='approved')::integer AS approved,COUNT(*) FILTER(WHERE status='used')::integer AS used,COUNT(*) FILTER(WHERE risk_level='high'AND status='draft')::integer AS high_risk,COALESCE(ROUND(AVG(confidence)*100),0)::integer AS average_confidence FROM ai_suggestions WHERE organization_id=$1`,[tenantId]);return rows[0]},
+      async suggestions({status='all',limit=20,offset=0}={}){const{rows}=await db.query(`SELECT ai.*,cc.channel,cc.contact_handle,cc.subject,c.name AS customer_name,COUNT(*)OVER()::integer AS total_count FROM ai_suggestions ai JOIN customer_conversations cc ON cc.id=ai.conversation_id AND cc.organization_id=$1 LEFT JOIN customers c ON c.id=cc.customer_id AND c.organization_id=$1 WHERE ai.organization_id=$1 AND($2='all'OR ai.status=$2)ORDER BY CASE ai.risk_level WHEN 'high'THEN 0 WHEN 'medium'THEN 1 ELSE 2 END,ai.created_at DESC LIMIT $3 OFFSET $4`,[tenantId,status,limit,offset]);return rows},
+      async knowledge({status='approved',limit=50,offset=0}={}){const{rows}=await db.query(`SELECT *,COUNT(*)OVER()::integer AS total_count FROM ai_knowledge_articles WHERE organization_id=$1 AND($2='all'OR status=$2)ORDER BY updated_at DESC LIMIT $3 OFFSET $4`,[tenantId,status,limit,offset]);return rows},
+      async insightStats(){const{rows}=await db.query(`SELECT COUNT(*) FILTER(WHERE status='open')::integer AS open,COUNT(*) FILTER(WHERE status='open'AND severity IN('critical','high'))::integer AS high_priority,COUNT(*) FILTER(WHERE status='acknowledged')::integer AS acknowledged,COUNT(*) FILTER(WHERE status='resolved'AND resolved_at>=date_trunc('month',now()))::integer AS resolved_this_month FROM ai_insights WHERE organization_id=$1`,[tenantId]);return rows[0]},
+      async insights({status='open',domain='all',limit=50,offset=0}={}){const{rows}=await db.query(`SELECT *,COUNT(*)OVER()::integer AS total_count FROM ai_insights WHERE organization_id=$1 AND($2='all'OR status=$2)AND($3='all'OR domain=$3)ORDER BY CASE severity WHEN 'critical'THEN 0 WHEN 'high'THEN 1 WHEN 'medium'THEN 2 ELSE 3 END,created_at DESC LIMIT $4 OFFSET $5`,[tenantId,status,domain,limit,offset]);return rows},
+      async latestBrief(){const brief=(await db.query(`SELECT * FROM ai_executive_briefs WHERE organization_id=$1 ORDER BY brief_date DESC LIMIT 1`,[tenantId])).rows[0];return brief||null},
+      async dispatchStats(){const{rows}=await db.query(`SELECT COUNT(*) FILTER(WHERE status='pending')::integer AS pending,COUNT(*) FILTER(WHERE status='approved')::integer AS approved,COUNT(*) FILTER(WHERE status='rejected')::integer AS rejected,COUNT(*) FILTER(WHERE risk_level='high'AND status='pending')::integer AS high_risk FROM ai_dispatch_recommendations WHERE organization_id=$1`,[tenantId]);return rows[0]},
+      async dispatchQueue({limit=30,offset=0}={}){const{rows}=await db.query(`SELECT j.id,j.status,j.city_id,j.scheduled_at,j.required_skill_code,j.service_duration_minutes,c.name AS customer_name,o.external_order_id,COUNT(*)OVER()::integer AS total_count FROM service_jobs j JOIN orders o ON o.id=j.order_id JOIN customers c ON c.id=o.customer_id WHERE j.organization_id=$1 AND c.organization_id=$1 AND j.status='pending_assignment' ORDER BY j.created_at ASC LIMIT $2 OFFSET $3`,[tenantId,limit,offset]);return rows},
+      async dispatchRecommendations({status='all',limit=30,offset=0}={}){const{rows}=await db.query(`SELECT r.*,j.city_id,j.required_skill_code,c.name AS customer_name,o.external_order_id,COUNT(*)OVER()::integer AS total_count FROM ai_dispatch_recommendations r JOIN service_jobs j ON j.id=r.job_id AND j.organization_id=$1 JOIN orders o ON o.id=j.order_id JOIN customers c ON c.id=o.customer_id AND c.organization_id=$1 WHERE r.organization_id=$1 AND($2='all'OR r.status=$2)ORDER BY CASE r.status WHEN 'pending'THEN 0 ELSE 1 END,r.created_at DESC LIMIT $3 OFFSET $4`,[tenantId,status,limit,offset]);return rows},
+      async salesStats(){const{rows}=await db.query(`SELECT COUNT(*) FILTER(WHERE status IN('new','approved','contacted'))::integer AS active,COUNT(*) FILTER(WHERE status='new')::integer AS new,COUNT(*) FILTER(WHERE status='contacted')::integer AS contacted,COUNT(*) FILTER(WHERE status='converted'AND updated_at>=date_trunc('month',now()))::integer AS converted_this_month,COALESCE(SUM(estimated_value)FILTER(WHERE status IN('new','approved','contacted')),0)::numeric(14,2)AS pipeline_value FROM ai_sales_opportunities WHERE organization_id=$1`,[tenantId]);return rows[0]},
+      async salesOpportunities({status='active',type='all',limit=50,offset=0}={}){const{rows}=await db.query(`SELECT so.*,c.name AS customer_name,u.mobile AS assigned_mobile,COUNT(*)OVER()::integer AS total_count FROM ai_sales_opportunities so JOIN customers c ON c.id=so.customer_id AND c.organization_id=$1 LEFT JOIN users u ON u.id=so.assigned_to AND u.organization_id=$1 WHERE so.organization_id=$1 AND CASE $2 WHEN 'active'THEN so.status IN('new','approved','contacted')WHEN 'all'THEN true ELSE so.status=$2 END AND($3='all'OR so.opportunity_type=$3)ORDER BY so.score DESC,so.estimated_value DESC,so.created_at DESC LIMIT $4 OFFSET $5`,[tenantId,status,type,limit,offset]);return rows},
+      async marketingStats(){const{rows}=await db.query(`SELECT COUNT(*) FILTER(WHERE status IN('new','approved','scheduled'))::integer AS active,COUNT(*) FILTER(WHERE status='new')::integer AS new,COUNT(*) FILTER(WHERE status='scheduled')::integer AS scheduled,COUNT(*) FILTER(WHERE status='completed'AND updated_at>=date_trunc('month',now()))::integer AS completed_this_month,COUNT(*) FILTER(WHERE priority='high'AND status IN('new','approved','scheduled'))::integer AS high_priority FROM ai_marketing_recommendations WHERE organization_id=$1`,[tenantId]);return rows[0]},
+      async marketingRecommendations({status='active',type='all',limit=50,offset=0}={}){const{rows}=await db.query(`SELECT *,COUNT(*)OVER()::integer AS total_count FROM ai_marketing_recommendations WHERE organization_id=$1 AND CASE $2 WHEN 'active'THEN status IN('new','approved','scheduled')WHEN 'all'THEN true ELSE status=$2 END AND($3='all'OR recommendation_type=$3)ORDER BY CASE priority WHEN 'high'THEN 0 WHEN 'medium'THEN 1 ELSE 2 END,created_at DESC LIMIT $4 OFFSET $5`,[tenantId,status,type,limit,offset]);return rows},
+      async financeStats(){const{rows}=await db.query(`SELECT COUNT(*) FILTER(WHERE status IN('open','reviewed'))::integer AS active,COUNT(*) FILTER(WHERE status='open')::integer AS open,COUNT(*) FILTER(WHERE severity IN('critical','high')AND status IN('open','reviewed'))::integer AS high_priority,COUNT(*) FILTER(WHERE status='resolved'AND resolved_at>=date_trunc('month',now()))::integer AS resolved_this_month,COALESCE(SUM(financial_impact)FILTER(WHERE status IN('open','reviewed')),0)::numeric(14,2)AS financial_exposure FROM ai_finance_anomalies WHERE organization_id=$1`,[tenantId]);return rows[0]},
+      async financeAnomalies({status='active',type='all',limit=50,offset=0}={}){const{rows}=await db.query(`SELECT *,COUNT(*)OVER()::integer AS total_count FROM ai_finance_anomalies WHERE organization_id=$1 AND CASE $2 WHEN 'active'THEN status IN('open','reviewed')WHEN 'all'THEN true ELSE status=$2 END AND($3='all'OR anomaly_type=$3)ORDER BY CASE severity WHEN 'critical'THEN 0 WHEN 'high'THEN 1 ELSE 2 END,financial_impact DESC,created_at DESC LIMIT $4 OFFSET $5`,[tenantId,status,type,limit,offset]);return rows}
     }
   };
 }
