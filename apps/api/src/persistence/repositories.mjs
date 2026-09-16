@@ -565,6 +565,68 @@ export function createRepositories(db) {
       }
     },
 
+    inventory: {
+      async stats() {
+        const { rows } = await db.query(
+          `SELECT COUNT(*) FILTER (WHERE i.is_active)::integer AS total_skus,
+                  COALESCE(SUM(stock.quantity), 0)::numeric(14,2) AS total_units,
+                  COALESCE(SUM(stock.quantity * i.unit_cost), 0)::numeric(14,2) AS stock_value,
+                  COUNT(*) FILTER (WHERE i.is_active AND COALESCE(stock.quantity, 0) = 0)::integer AS out_of_stock,
+                  COUNT(*) FILTER (WHERE i.is_active AND COALESCE(stock.quantity, 0) > 0 AND COALESCE(stock.quantity, 0) <= i.reorder_level)::integer AS low_stock
+           FROM inventory_items i
+           LEFT JOIN LATERAL (SELECT SUM(quantity) AS quantity FROM inventory_balances WHERE item_id = i.id) stock ON true`
+        );
+        return rows[0] || { total_skus: 0, total_units: 0, stock_value: 0, out_of_stock: 0, low_stock: 0 };
+      },
+      async list({ query = '', status = 'all', limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT i.id, i.sku, i.name, i.unit, i.reorder_level, i.unit_cost, i.is_active,
+                  COALESCE(stock.total_quantity, 0)::numeric(12,2) AS total_quantity,
+                  COALESCE(stock.balances, '[]'::json) AS balances,
+                  COALESCE(tech.technician_quantity, 0)::numeric(12,2) AS technician_quantity,
+                  CASE WHEN COALESCE(stock.total_quantity, 0) = 0 THEN 'out'
+                       WHEN stock.total_quantity <= i.reorder_level THEN 'low' ELSE 'ok' END AS stock_status,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM inventory_items i
+           LEFT JOIN LATERAL (
+             SELECT SUM(b.quantity) AS total_quantity,
+                    JSON_AGG(JSON_BUILD_OBJECT('warehouse_id', b.warehouse_id, 'warehouse_name', w.name, 'quantity', b.quantity) ORDER BY w.name) AS balances
+             FROM inventory_balances b JOIN warehouses w ON w.id = b.warehouse_id WHERE b.item_id = i.id
+           ) stock ON true
+           LEFT JOIN LATERAL (SELECT SUM(quantity) AS technician_quantity FROM technician_inventory WHERE item_id = i.id) tech ON true
+           WHERE i.is_active AND ($1 = '' OR i.sku ILIKE '%' || $1 || '%' OR i.name ILIKE '%' || $1 || '%')
+             AND CASE $2 WHEN 'low' THEN COALESCE(stock.total_quantity, 0) > 0 AND COALESCE(stock.total_quantity, 0) <= i.reorder_level
+                         WHEN 'out' THEN COALESCE(stock.total_quantity, 0) = 0 ELSE true END
+           ORDER BY CASE WHEN COALESCE(stock.total_quantity, 0) = 0 THEN 0 WHEN stock.total_quantity <= i.reorder_level THEN 1 ELSE 2 END,
+                    i.name ASC LIMIT $3 OFFSET $4`,
+          [query.trim(), status, limit, offset]
+        );
+        return rows;
+      },
+      async movements({ limit = 20, offset = 0 } = {}) {
+        const { rows } = await db.query(
+          `SELECT m.id, m.movement_type, m.item_id, i.sku, i.name AS item_name, m.quantity, m.unit_cost,
+                  m.from_warehouse_id, wf.name AS from_warehouse_name, m.to_warehouse_id, wt.name AS to_warehouse_name,
+                  m.technician_id, u.mobile AS technician_mobile, m.reference, m.notes, m.created_at,
+                  COUNT(*) OVER()::integer AS total_count
+           FROM inventory_movements m JOIN inventory_items i ON i.id = m.item_id
+           LEFT JOIN warehouses wf ON wf.id = m.from_warehouse_id
+           LEFT JOIN warehouses wt ON wt.id = m.to_warehouse_id
+           LEFT JOIN technicians t ON t.id = m.technician_id LEFT JOIN users u ON u.id = t.user_id
+           ORDER BY m.created_at DESC, m.id DESC LIMIT $1 OFFSET $2`, [limit, offset]
+        );
+        return rows;
+      },
+      async technicianStock(technicianId) {
+        const { rows } = await db.query(
+          `SELECT ti.technician_id, ti.item_id, i.sku, i.name, i.unit, ti.quantity, ti.updated_at
+           FROM technician_inventory ti JOIN inventory_items i ON i.id = ti.item_id
+           WHERE ti.technician_id = $1 AND ti.quantity > 0 ORDER BY i.name ASC`, [technicianId]
+        );
+        return rows;
+      }
+    },
+
     assets: {
       async maintenanceStats() {
         const { rows } = await db.query(
