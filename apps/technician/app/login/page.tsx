@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const apiBase = process.env.NEXT_PUBLIC_SUBIL_API_URL?.replace(/\/$/, "") || "";
+const demoMode = process.env.NEXT_PUBLIC_SUBIL_DEMO_MODE === "true";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,13 +15,20 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   useEffect(() => { if (sessionStorage.getItem("subil_technician_session")) router.replace("/"); }, [router]);
 
+  function demoLogin() {
+    if (!demoMode) return;
+    sessionStorage.setItem("subil_technician_session", "preview-technician-session");
+    router.replace("/");
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault(); setError("");
     if (!/^5\d{8}$/.test(mobile)) return setError("أدخل رقم جوال سعودي صحيحًا");
     if (step === "otp" && !/^\d{6}$/.test(otp)) return setError("أدخل رمز التحقق المكوّن من 6 أرقام");
     if (!apiBase) {
       if (step === "mobile") return setStep("otp");
-      sessionStorage.setItem("subil_technician_session", "preview-technician-session"); router.replace("/"); return;
+      if (demoMode) return demoLogin();
+      return setError("خدمة الدخول غير متاحة حاليًا");
     }
     setLoading(true);
     try {
@@ -45,6 +53,7 @@ export default function LoginPage() {
       {error && <p className="error">{error}</p>}
       <button disabled={loading}>{loading ? "جارٍ التحقق..." : step === "mobile" ? "إرسال رمز التحقق" : "دخول"}</button>
       {step === "otp" && <button type="button" className="link" onClick={() => { setStep("mobile"); setOtp(""); }}>تغيير رقم الجوال</button>}
-    </form><footer>دخول آمن برمز تحقق · لا تتم مشاركة بيانات العميل</footer>
+      {demoMode && <button type="button" className="link" onClick={demoLogin}>دخول تجريبي كفني</button>}
+    </form><footer>{demoMode ? "نسخة تجريبية — لا تؤثر على بيانات التشغيل" : "دخول آمن برمز تحقق · لا تتم مشاركة بيانات العميل"}</footer>
   </section></main>;
 }
