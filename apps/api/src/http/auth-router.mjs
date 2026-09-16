@@ -31,7 +31,7 @@ export async function routeAuthRequest({ method, url, body = {}, authorization, 
     if (method === 'GET' && url === '/api/v1/me') {
       const user = await (auth.authenticateBearer || authenticateBearer)(db, authorization);
       if (!user) return response(401, { error: 'invalid_or_expired_session' });
-      return response(200, { user: { id: user.user_id, role: user.role } });
+      return response(200, { user: { id: user.user_id, role: user.role, organizationId: user.organization_id } });
     }
   } catch (error) {
     const mapped = mapAuthError(error.message);
