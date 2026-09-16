@@ -7,6 +7,13 @@ const { Pool } = pg;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(here, '../../db/migrations');
 
+function stripOuterTransaction(sql) {
+  return String(sql)
+    .replace(/^\s*BEGIN\s*;?/i, '')
+    .replace(/COMMIT\s*;?\s*$/i, '')
+    .trim();
+}
+
 export async function migrate({ connectionString = process.env.DATABASE_URL } = {}) {
   if (!connectionString) throw new Error('DATABASE_URL is required');
   const pool = new Pool({
@@ -20,28 +27,33 @@ export async function migrate({ connectionString = process.env.DATABASE_URL } = 
       filename text PRIMARY KEY,
       applied_at timestamptz NOT NULL DEFAULT now()
     )`);
-    const names = (await fs.readdir(migrationsDir))
-      .filter(name => /^\d+_.+\.sql$/.test(name) && !name.endsWith('.down.sql'))
-      .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
-    const { rows } = await client.query('SELECT filename FROM schema_migrations');
-    const applied = new Set(rows.map(row => row.filename));
-    let count = 0;
-    for (const name of names) {
-      if (applied.has(name)) continue;
-      const sql = await fs.readFile(path.join(migrationsDir, name), 'utf8');
-      await client.query('BEGIN');
-      try {
-        await client.query(sql);
-        await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [name]);
-        await client.query('COMMIT');
-        count += 1;
-        console.log(`Applied migration ${name}`);
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw new Error(`Migration ${name} failed: ${error.message}`);
+    await client.query("SELECT pg_advisory_lock(hashtext('subil-schema-migrations'))");
+    try {
+      const names = (await fs.readdir(migrationsDir))
+        .filter(name => /^\d+_.+\.sql$/.test(name) && !name.endsWith('.down.sql'))
+        .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+      const { rows } = await client.query('SELECT filename FROM schema_migrations');
+      const applied = new Set(rows.map(row => row.filename));
+      let count = 0;
+      for (const name of names) {
+        if (applied.has(name)) continue;
+        const sql = stripOuterTransaction(await fs.readFile(path.join(migrationsDir, name), 'utf8'));
+        await client.query('BEGIN');
+        try {
+          if (sql) await client.query(sql);
+          await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [name]);
+          await client.query('COMMIT');
+          count += 1;
+          console.log(`Applied migration ${name}`);
+        } catch (error) {
+          await client.query('ROLLBACK');
+          throw new Error(`Migration ${name} failed: ${error.message}`);
+        }
       }
+      return { applied: count, total: names.length };
+    } finally {
+      await client.query("SELECT pg_advisory_unlock(hashtext('subil-schema-migrations'))");
     }
-    return { applied: count, total: names.length };
   } finally {
     client.release();
     await pool.end();
