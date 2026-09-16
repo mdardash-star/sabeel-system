@@ -3,14 +3,15 @@ export function createRepositories(db) {
 
   return {
     technicians: {
-      async findActiveByUserId(userId) {
+      async findActiveByUserId(userId, tenantId = null) {
         const { rows } = await db.query(
           `SELECT t.id, t.user_id, t.city_id, t.branch_id
            FROM technicians t
            JOIN users u ON u.id = t.user_id
-           WHERE t.user_id = $1 AND t.is_active = true AND u.is_active = true
+           WHERE t.user_id = $1 AND ($2::uuid IS NULL OR u.organization_id = $2)
+             AND t.is_active = true AND u.is_active = true
            LIMIT 1`,
-          [userId]
+          [userId, tenantId]
         );
         return rows[0] || null;
       },
@@ -131,12 +132,13 @@ export function createRepositories(db) {
     },
 
     customers: {
-      async findByUserId(userId) {
+      async findByUserId(userId, tenantId = null) {
         const { rows } = await db.query(
           `SELECT c.id,c.name,c.created_at,u.mobile,
                   (SELECT COUNT(*)::integer FROM orders o WHERE o.customer_id=c.id) AS order_count,
                   (SELECT COUNT(*)::integer FROM installed_assets a WHERE a.customer_id=c.id AND a.status='active') AS active_asset_count
-           FROM customers c JOIN users u ON u.id=c.user_id WHERE c.user_id=$1 LIMIT 1`, [userId]
+           FROM customers c JOIN users u ON u.id=c.user_id
+           WHERE c.user_id=$1 AND ($2::uuid IS NULL OR u.organization_id=$2) LIMIT 1`, [userId,tenantId]
         );
         return rows[0] || null;
       },
