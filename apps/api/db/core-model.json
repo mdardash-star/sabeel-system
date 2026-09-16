@@ -1,6 +1,7 @@
 {
   "entities": {
-    "users": ["id", "mobile", "role", "isActive", "createdAt"],
+    "organizations": ["id", "slug", "name", "isActive", "createdAt"],
+    "users": ["id", "organizationId", "mobile", "role", "isActive", "createdAt"],
     "customers": ["id", "userId", "name", "createdAt"],
     "serviceLocations": ["id", "customerId", "cityId", "addressText", "latitude", "longitude"],
     "technicians": ["id", "userId", "cityId", "branchId", "compensationPolicyId", "isActive"],
@@ -16,6 +17,7 @@
     "uniqueOrderSourceId": true,
     "technicianCustomerPhoneExposure": false,
     "settlementKeepsPolicyVersion": true,
-    "sensitiveMutationsAreAudited": true
+    "sensitiveMutationsAreAudited": true,
+    "tenantComesFromAuthenticatedSession": true
   }
 }
