@@ -398,7 +398,7 @@ export function createRepositories(db) {
     },
 
     jobs: {
-      async operationsStats() {
+      async operationsStats(tenantId = null) {
         const { rows } = await db.query(
           `SELECT COUNT(*) FILTER (WHERE status NOT IN ('completed','cancelled'))::integer AS open,
                   COUNT(*) FILTER (WHERE status = 'pending_assignment')::integer AS pending_assignment,
@@ -406,11 +406,12 @@ export function createRepositories(db) {
                   COUNT(*) FILTER (WHERE status IN ('en_route','arrived','in_progress'))::integer AS in_progress,
                   COUNT(*) FILTER (WHERE status NOT IN ('completed','cancelled','pending_assignment') AND scheduled_at < now())::integer AS overdue,
                   COUNT(*) FILTER (WHERE status = 'completed' AND completed_at >= date_trunc('day', now()))::integer AS completed_today
-           FROM service_jobs`
+           FROM service_jobs
+           WHERE ($1::uuid IS NULL OR organization_id = $1)` , [tenantId]
         );
         return rows[0] || { open: 0, pending_assignment: 0, scheduled_today: 0, in_progress: 0, overdue: 0, completed_today: 0 };
       },
-      async listForOperations({ query = '', status = 'all', limit = 20, offset = 0 } = {}) {
+      async listForOperations({ query = '', status = 'all', limit = 20, offset = 0, tenantId = null } = {}) {
         const { rows } = await db.query(
           `SELECT j.id, j.order_id, o.external_order_id, j.customer_id, c.name AS customer_name,
                   u.mobile AS customer_mobile, j.service_location_id, l.city_id, l.address_text,
@@ -429,7 +430,8 @@ export function createRepositories(db) {
            JOIN customers c ON c.id = j.customer_id
            LEFT JOIN users u ON u.id = c.user_id
            LEFT JOIN service_locations l ON l.id = j.service_location_id
-           WHERE ($1 = '' OR c.name ILIKE '%' || $1 || '%' OR u.mobile LIKE '%' || $1 || '%'
+           WHERE ($5::uuid IS NULL OR j.organization_id = $5)
+             AND ($1 = '' OR c.name ILIKE '%' || $1 || '%' OR u.mobile LIKE '%' || $1 || '%'
                   OR o.external_order_id ILIKE '%' || $1 || '%' OR l.address_text ILIKE '%' || $1 || '%')
              AND CASE $2
                WHEN 'open' THEN j.status NOT IN ('completed','cancelled')
@@ -445,7 +447,7 @@ export function createRepositories(db) {
              CASE WHEN j.status = 'pending_assignment' THEN 0 WHEN j.status NOT IN ('completed','cancelled') AND j.scheduled_at < now() THEN 1 ELSE 2 END,
              COALESCE(j.scheduled_at, j.created_at) ASC, j.id ASC
            LIMIT $3 OFFSET $4`,
-          [query.trim(), status, limit, offset]
+          [query.trim(), status, limit, offset, tenantId]
         );
         return rows;
       },
