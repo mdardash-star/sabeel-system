@@ -156,6 +156,9 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - GET `/ai/marketing/stats` and `/ai/marketing/recommendations` — prioritized campaign, content, delivery, attribution and budget actions
 - POST `/ai/marketing/scan` — idempotent analysis of 30-day performance signals; it does not create or launch campaigns automatically
 - PATCH `/ai/marketing/recommendations/:id` — human approval, scheduling and completion workflow with audited outcomes
+- GET `/ai/finance/stats` and `/ai/finance/anomalies` — financial exception queue and estimated exposure
+- POST `/ai/finance/scan` — idempotent detection of negative-margin orders, revenue drops, settlement backlog and overdue purchases
+- PATCH `/ai/finance/anomalies/:id` — finance-only review and resolution workflow with mandatory outcome notes
 
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`
