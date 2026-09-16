@@ -129,6 +129,14 @@ The signed-in user is resolved to an active technician profile server-side. Job 
 - POST `/marketing/spend` — records audited campaign spend for ROAS calculation
 - GET `/marketing/attribution?from=<ISO>&to=<ISO>` — attributed revenue, conversion coverage, channel/campaign performance, spend and ROAS
 
+## Unified Customer Conversations
+- GET `/conversations/stats` — active, waiting, priority and unread counters
+- GET `/conversations?status=active|open|pending_agent|waiting_customer|closed&channel=all|whatsapp|email|instagram|x|sms|webchat&q=&limit=20&offset=0` — prioritized omnichannel inbox
+- GET `/conversations/:id` — customer-linked conversation and chronological messages
+- POST `/conversations/inbound` — idempotent connector ingress using the provider message identifier
+- POST `/conversations/:id/reply` — queues an audited agent response and marks the thread waiting for the customer
+- PATCH `/conversations/:id` — assigns, prioritizes, reopens or closes a conversation with audit history
+
 ## Integration Webhooks
 - POST `/webhooks/woocommerce`
 - POST `/webhooks/payments/:provider`
