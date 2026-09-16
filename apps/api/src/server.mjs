@@ -106,6 +106,8 @@ function isPersistentRoute(method, pathname) {
       pathname === '/api/v1/jobs/escalations/stats' || pathname === '/api/v1/jobs/escalations' ||
       pathname === '/api/v1/technicians/stats' || pathname === '/api/v1/technicians' ||
       pathname === '/api/v1/settlements/stats' || pathname === '/api/v1/settlements' ||
+      pathname === '/api/v1/inventory/stats' || pathname === '/api/v1/inventory' || pathname === '/api/v1/inventory/movements' ||
+      /^\/api\/v1\/technicians\/[^/]+\/inventory$/.test(pathname) ||
       /^\/api\/v1\/technicians\/[^/]+\/performance$/.test(pathname) ||
       /^\/api\/v1\/jobs\/[^/]+\/candidates$/.test(pathname) ||
       /^\/api\/v1\/customers(?:\/[^/]+)?(?:\/(?:timeline|addresses|assets|orders|jobs))?$/.test(pathname) ||
@@ -117,6 +119,7 @@ function isPersistentRoute(method, pathname) {
     return pathname === '/api/v1/customers' || /^\/api\/v1\/customers\/[^/]+\/(?:addresses|assets)$/.test(pathname) ||
       /^\/api\/v1\/jobs\/[^/]+\/(?:assign|reassign)$/.test(pathname) ||
       pathname === '/api/v1/jobs/escalations/run' || /^\/api\/v1\/jobs\/[^/]+\/escalations\/resolve$/.test(pathname) ||
+      ['/api/v1/inventory/items','/api/v1/inventory/receive','/api/v1/inventory/transfer','/api/v1/inventory/technician-issue'].includes(pathname) ||
       /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+\/maintenance$/.test(pathname) ||
       /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/complete$/.test(pathname) ||
       /^\/api\/v1\/settlements\/[^/]+\/(?:approve|reject|paid)$/.test(pathname);
