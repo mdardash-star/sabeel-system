@@ -2,6 +2,7 @@ import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { routeRequest } from './http/router.mjs';
 import { routePersistentRequest } from './http/persistent-router.mjs';
+import { routeTenantReadRequest } from './http/tenant-read-router.mjs';
 import { createDatabase } from './persistence/database.mjs';
 import { authenticateBearer } from './auth/session-auth.mjs';
 import { tenantContext } from './auth/tenant-context.mjs';
@@ -58,9 +59,13 @@ export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } 
         jobs: []
       };
 
-      const result = persistent
-        ? await routePersistentRequest({ method: req.method, url: requestUrl.pathname, role, body, context, db })
-        : routeRequest({ method: req.method, url: requestUrl.pathname, role, body, context });
+      let result;
+      if (persistent) {
+        result = await routeTenantReadRequest({ method: req.method, url: requestUrl.pathname, role, context, db });
+        if (!result) result = await routePersistentRequest({ method: req.method, url: requestUrl.pathname, role, body, context, db });
+      } else {
+        result = routeRequest({ method: req.method, url: requestUrl.pathname, role, body, context });
+      }
 
       sendJson(res, result.status, result.data);
     } catch (error) {
