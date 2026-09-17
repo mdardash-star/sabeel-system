@@ -19,6 +19,7 @@ struct SubilWebView: UIViewRepresentable {
         controller.addUserScript(WKUserScript(source: Self.bridgeScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = controller
+        configuration.websiteDataStore = .default()
         configuration.allowsInlineMediaPlayback = true
         let webView = WKWebView(frame: .zero, configuration: configuration)
         context.coordinator.webView = webView
@@ -41,29 +42,86 @@ struct SubilWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         weak var webView: WKWebView?
-        private let router = NativePaymentRouter()
+        private var paymentWebView: WKWebView?
+        private var paymentContainer: UIView?
+        private var pendingPaymentId: String?
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any], let id = body["id"] as? String, let request = body["request"] as? [String: Any] else { return }
-            Task { @MainActor in
-                let result = await router.start(request: request)
-                let data = (try? JSONSerialization.data(withJSONObject: result)) ?? Data("{}".utf8)
-                let json = String(data: data, encoding: .utf8) ?? "{}"
-                webView?.evaluateJavaScript("window.__subilResolveNativePayment(\(String(reflecting:id)), \(json));")
+            guard let body = message.body as? [String: Any],
+                  let id = body["id"] as? String,
+                  let request = body["request"] as? [String: Any],
+                  let rawUrl = request["checkoutUrl"] as? String,
+                  let checkoutUrl = URL(string: rawUrl),
+                  checkoutUrl.scheme == "https" else {
+                resolve(id: (message.body as? [String: Any])?["id"] as? String ?? "", status: "failed", message: "invalid_checkout_url")
+                return
+            }
+            openPayment(id: id, url: checkoutUrl)
+        }
+
+        private func openPayment(id: String, url: URL) {
+            guard let root = webView else { resolve(id: id, status: "failed", message: "webview_unavailable"); return }
+            closePayment(status: nil)
+            pendingPaymentId = id
+
+            let container = UIView(frame: root.bounds)
+            container.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            container.backgroundColor = .systemBackground
+
+            let configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = .default()
+            configuration.allowsInlineMediaPlayback = true
+            let payment = WKWebView(frame: container.bounds, configuration: configuration)
+            payment.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            payment.navigationDelegate = self
+            container.addSubview(payment)
+
+            let close = UIButton(type: .system)
+            close.setTitle("إغلاق", for: .normal)
+            close.titleLabel?.font = .boldSystemFont(ofSize: 16)
+            close.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.92)
+            close.layer.cornerRadius = 12
+            close.frame = CGRect(x: 16, y: 48, width: 72, height: 40)
+            close.addTarget(self, action: #selector(cancelPayment), for: .touchUpInside)
+            container.addSubview(close)
+
+            root.addSubview(container)
+            paymentContainer = container
+            paymentWebView = payment
+            payment.load(URLRequest(url: url))
+        }
+
+        @objc private func cancelPayment() {
+            closePayment(status: "cancelled")
+        }
+
+        private func closePayment(status: String?) {
+            let id = pendingPaymentId
+            paymentWebView?.stopLoading()
+            paymentWebView?.navigationDelegate = nil
+            paymentWebView?.removeFromSuperview()
+            paymentContainer?.removeFromSuperview()
+            paymentWebView = nil
+            paymentContainer = nil
+            pendingPaymentId = nil
+            if let id, let status { resolve(id: id, status: status, message: nil) }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard webView === paymentWebView, let url = webView.url else { return }
+            let host = (url.host ?? "").lowercased()
+            let path = url.path.lowercased()
+            if (host == "subil.store" || host.hasSuffix(".subil.store")) && path.contains("order-received") {
+                closePayment(status: "returned")
             }
         }
-    }
-}
 
-@MainActor
-final class NativePaymentRouter {
-    func start(request: [String: Any]) async -> [String: Any] {
-        let provider = String(describing: request["provider"] ?? "")
-        switch provider {
-        case "tap", "amwal", "tabby", "tamara", "apple_pay", "mada", "cards", "stc_pay":
-            return ["status": "failed", "message": "provider_sdk_not_installed", "providerReference": provider]
-        default:
-            return ["status": "failed", "message": "unsupported_payment_provider"]
+        private func resolve(id: String, status: String, message: String?) {
+            var result: [String: Any] = ["status": status]
+            if let message, !message.isEmpty { result["message"] = message }
+            let data = (try? JSONSerialization.data(withJSONObject: result)) ?? Data("{}".utf8)
+            let json = String(data: data, encoding: .utf8) ?? "{}"
+            webView?.evaluateJavaScript("window.__subilResolveNativePayment(\(String(reflecting: id)), \(json));")
         }
     }
 }

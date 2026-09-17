@@ -1,23 +1,12 @@
-export type NativePaymentProvider="tap"|"amwal"|"tabby"|"tamara"|"apple_pay"|"mada"|"cards"|"stc_pay";
-
 export type NativePaymentRequest={
- provider:NativePaymentProvider;
+ provider:string;
  orderId:string;
- amount:number;
- currency:"SAR";
- customer?:{name?:string;email?:string;phone?:string};
- session?:{
-   providerReference?:string;
-   checkoutUrl?:string;
-   status?:string;
-   mode?:string;
- };
+ orderKey?:string;
+ checkoutUrl:string;
 };
 
 export type NativePaymentResult={
- status:"paid"|"cancelled"|"failed"|"pending";
- transactionId?:string;
- providerReference?:string;
+ status:"returned"|"cancelled"|"failed";
  message?:string;
 };
 
