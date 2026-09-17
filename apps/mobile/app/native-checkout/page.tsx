@@ -5,9 +5,10 @@ import {useRouter} from "next/navigation";
 import {nativePaymentsAvailable,startNativePayment,NativePaymentProvider} from "../payments/native-payment-bridge";
 
 type Method={id:NativePaymentProvider;label:string;enabled:boolean;mode:string};
-type Cart={items_count:number;totals:{total_price:string;currency_code:string;currency_minor_unit:number;currency_symbol:string}};
+type CartItem={id:number;name:string;quantity:number;permalink?:string;images?:Array<{src?:string}>;prices?:{price?:string;currency_minor_unit?:number};totals?:{line_total?:string;currency_minor_unit?:number}};
+type Cart={items_count:number;items?:CartItem[];billing_address?:{first_name?:string;last_name?:string;email?:string;phone?:string};shipping_address?:{city?:string;address_1?:string;postcode?:string};totals:{total_price:string;currency_code:string;currency_minor_unit:number;currency_symbol:string}};
 
-function amount(value:string,minor=2){return Number(value||0)/10**minor}
+function amount(value:string|undefined,minor=2){return Number(value||0)/10**minor}
 
 export default function NativeCheckout(){
  const router=useRouter();
@@ -20,10 +21,25 @@ export default function NativeCheckout(){
    setBusy(true);setError("");setResult("");
    try{
      const orderId=`subil-${Date.now()}`;
-     const sessionResponse=await fetch("/api/payments/session",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({provider:selected,orderId,amount:total,currency:"SAR"})});
+     const customer={
+       name:[cart.billing_address?.first_name,cart.billing_address?.last_name].filter(Boolean).join(" ")||"عميل سبيل",
+       email:cart.billing_address?.email||"",
+       phone:cart.billing_address?.phone||""
+     };
+     const shipping={
+       city:cart.shipping_address?.city||"الرياض",
+       address:cart.shipping_address?.address_1||"الرياض",
+       zip:cart.shipping_address?.postcode||"00000"
+     };
+     const items=(cart.items||[]).map((item,index)=>{
+       const minor=item.prices?.currency_minor_unit??item.totals?.currency_minor_unit??2;
+       const unit=item.prices?.price?amount(item.prices.price,minor):(item.quantity>0?amount(item.totals?.line_total,minor)/item.quantity:0);
+       return {title:item.name,quantity:item.quantity,unitPrice:unit,referenceId:String(item.id||`${orderId}-${index+1}`),category:"Water Products",imageUrl:item.images?.[0]?.src||"",productUrl:item.permalink||"https://subil.store/"};
+     });
+     const sessionResponse=await fetch("/api/payments/session",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({provider:selected,orderId,amount:total,currency:"SAR",customer,shipping,items})});
      const session=await sessionResponse.json().catch(()=>({}));
      if(!sessionResponse.ok)throw new Error(session.error||"payment_session_failed");
-     const paymentResult=await startNativePayment({provider:selected,orderId,amount:total,currency:"SAR"});
+     const paymentResult=await startNativePayment({provider:selected,orderId,amount:total,currency:"SAR",customer,session:{providerReference:session.providerReference,checkoutUrl:session.checkoutUrl,status:session.status,mode:session.mode}});
      if(paymentResult.status==="paid")setResult("تم الدفع بنجاح");
      else if(paymentResult.status==="cancelled")setResult("تم إلغاء عملية الدفع");
      else if(paymentResult.status==="pending")setResult("عملية الدفع قيد المعالجة");

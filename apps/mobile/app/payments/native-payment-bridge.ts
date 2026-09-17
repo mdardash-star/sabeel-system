@@ -6,6 +6,12 @@ export type NativePaymentRequest={
  amount:number;
  currency:"SAR";
  customer?:{name?:string;email?:string;phone?:string};
+ session?:{
+   providerReference?:string;
+   checkoutUrl?:string;
+   status?:string;
+   mode?:string;
+ };
 };
 
 export type NativePaymentResult={
