@@ -23,7 +23,7 @@ export default function PaymentPage(){
         const parsed=new URL(String(payload?.url||""));
         if(parsed.protocol!=="https:")throw new Error("invalid_payment_url");
         const target=parsed.toString();
-        if(requiresDirectNavigation(target)){
+        if(payload?.mode==="direct"||requiresDirectNavigation(target)){
           window.location.replace(target);
           return;
         }
