@@ -14,7 +14,7 @@ async function createTapSession(input:ProviderSessionInput){
  if(!secret)throw new Error("payment_provider_not_configured");
  const sourceMap:Record<string,string>={tap:"src_all",mada:"src_sa.mada",cards:"src_card",stc_pay:"src_sa.stcpay",apple_pay:"src_apple_pay"};
  const phone=phoneParts(input.customer?.phone);
- const body:any={amount:input.amount,currency:input.currency,threeDSecure:true,save_card:false,customer_initiated:true,description:`SUBIL ${input.orderId}`,reference:{transaction:input.orderId,order:input.orderId},customer:{first_name:input.customer?.name||"عميل سبيل",email:input.customer?.email||"customer@subil.store",phone},source:{id:sourceMap[input.provider]||"src_all"},redirect:{url:`${input.origin}/payment-return?provider=${encodeURIComponent(input.provider)}&order=${encodeURIComponent(input.orderId)}`}};
+ const body:any={amount:input.amount,currency:input.currency,threeDSecure:true,save_card:false,customer_initiated:true,description:`SUBIL ${input.orderId}`,reference:{transaction:input.orderId,order:input.orderId},customer:{first_name:input.customer?.name||"عميل سبيل",email:input.customer?.email||"customer@subil.store",phone},source:{id:sourceMap[input.provider]||"src_all"},redirect:{url:`${input.origin}/payment-return?provider=${encodeURIComponent(input.provider)}&order=${encodeURIComponent(input.orderId)}`},post:{url:`${input.origin}/api/payments/webhooks/tap`}};
  const merchant=String(process.env.TAP_MERCHANT_ID||"").trim();if(merchant)body.merchant={id:merchant};
  const response=await fetch("https://api.tap.company/v2/charges/",{method:"POST",headers:jsonHeaders({authorization:`Bearer ${secret}`}),body:JSON.stringify(body),cache:"no-store"});
  const data=await parse(response);return {provider:input.provider,providerReference:String(data?.id||""),checkoutUrl:String(data?.transaction?.url||""),status:String(data?.status||"initiated").toLowerCase(),raw:{id:data?.id,status:data?.status}};
@@ -23,7 +23,7 @@ async function createTapSession(input:ProviderSessionInput){
 async function createAmwalSession(input:ProviderSessionInput){
  const apiKey=String(process.env.AMWAL_API_KEY||"").trim();const secret=String(process.env.AMWAL_SECRET_KEY||"").trim();const storeId=String(process.env.AMWAL_STORE_ID||"").trim();
  if(!apiKey||!secret||!storeId)throw new Error("payment_provider_not_configured");
- const response=await fetch(`https://backend.sa.amwal.tech/payment_links/${encodeURIComponent(storeId)}/create`,{method:"POST",headers:jsonHeaders({authorization:secret,"x-amwal-key":apiKey}),body:JSON.stringify({amount:input.amount,phoneNumber:saPhone(input.customer?.phone||""),title:`طلب سبيل ${input.orderId}`,description:`SUBIL ${input.orderId}`,singleUse:true}),cache:"no-store"});
+ const response=await fetch(`https://backend.sa.amwal.tech/payment_links/${encodeURIComponent(storeId)}/create`,{method:"POST",headers:jsonHeaders({authorization:secret,"x-amwal-key":apiKey}),body:JSON.stringify({amount:input.amount,phoneNumber:saPhone(input.customer?.phone||""),title:`طلب سبيل ${input.orderId}`,description:`SUBIL ${input.orderId}`,singleUse:true,callback_url:`${input.origin}/api/payments/webhooks/amwal`,metadata:{order_id:input.orderId,source:"subil-native"}}),cache:"no-store"});
  const data=await parse(response);return {provider:"amwal",providerReference:String(data?.payment_link_id||data?.id||""),checkoutUrl:String(data?.url||""),status:String(data?.status||"created").toLowerCase(),raw:{payment_link_id:data?.payment_link_id,status:data?.status}};
 }
 
