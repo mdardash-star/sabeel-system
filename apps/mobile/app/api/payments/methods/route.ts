@@ -1,26 +1,43 @@
-import {NextResponse} from "next/server";
+import {NextRequest,NextResponse} from "next/server";
 
-function wooReady(){return Boolean(String(process.env.WOO_CONSUMER_KEY||process.env.WOOCOMMERCE_CONSUMER_KEY||"").trim()&&String(process.env.WOO_CONSUMER_SECRET||process.env.WOOCOMMERCE_CONSUMER_SECRET||"").trim())}
-function missingWoo(){const missing:string[]=[];if(!String(process.env.WOO_CONSUMER_KEY||process.env.WOOCOMMERCE_CONSUMER_KEY||"").trim())missing.push("WOO_CONSUMER_KEY|WOOCOMMERCE_CONSUMER_KEY");if(!String(process.env.WOO_CONSUMER_SECRET||process.env.WOOCOMMERCE_CONSUMER_SECRET||"").trim())missing.push("WOO_CONSUMER_SECRET|WOOCOMMERCE_CONSUMER_SECRET");return missing}
-const providers=[
- {id:"tap",label:"تاب",required:["TAP_SECRET_KEY"]},
- {id:"amwal",label:"أموال",required:["AMWAL_API_KEY","AMWAL_SECRET_KEY","AMWAL_STORE_ID","AMWAL_WEBHOOK_PUBLIC_KEY"]},
- {id:"tabby",label:"تابي",required:["TABBY_SECRET_KEY","TABBY_MERCHANT_CODE","TABBY_WEBHOOK_HEADER_VALUE"]},
- {id:"tamara",label:"تمارا",required:["TAMARA_API_TOKEN","TAMARA_NOTIFICATION_TOKEN"]},
- {id:"apple_pay",label:"Apple Pay",required:["TAP_SECRET_KEY"]},
- {id:"mada",label:"مدى",required:["TAP_SECRET_KEY"]},
- {id:"cards",label:"البطاقات",required:["TAP_SECRET_KEY"]},
- {id:"stc_pay",label:"إس تي سي باي",required:["TAP_SECRET_KEY"]}
-];
+const upstream=(process.env.SUBIL_WOO_STORE_API_BASE||"https://subil.store/wp-json/wc/store/v1").replace(/\/$/,"");
+
+function labelFor(id:string){
+ const x=id.toLowerCase();
+ if(x.includes("amwal"))return x.includes("install")?"أموال - تقسيط":"أموال";
+ if(x.includes("tabby"))return"تابي";
+ if(x.includes("tamara"))return"تمارا";
+ if(x.includes("apple"))return"Apple Pay";
+ if(x.includes("mada"))return"مدى";
+ if(x.includes("stc"))return"STC Pay";
+ if(x.includes("tap"))return"Tap";
+ if(x.includes("cod"))return"الدفع عند الاستلام";
+ return id.replace(/[_-]+/g," ");
+}
 
 export const dynamic="force-dynamic";
 
-export async function GET(){
- const wooMissing=missingWoo();
- const methods=providers.map(p=>{
-   const missing=[...p.required.filter(key=>!Boolean(String(process.env[key]||"").trim())),...wooMissing];
-   return {id:p.id,label:p.label,enabled:missing.length===0&&wooReady(),status:missing.length===0?"ready":"needs_configuration",missing,mode:"native_sdk" as const};
- });
- const ready=methods.filter(x=>x.enabled).length;
- return NextResponse.json({status:ready===methods.length?"ready":ready>0?"partial":"not_ready",ready_count:ready,total_count:methods.length,methods},{headers:{"cache-control":"no-store"}});
+export async function GET(request:NextRequest){
+ try{
+  const headers=new Headers({accept:"application/json"});
+  const cartToken=request.cookies.get("subil_woo_cart_token")?.value;
+  const nonce=request.cookies.get("subil_woo_nonce")?.value;
+  if(cartToken)headers.set("Cart-Token",cartToken);
+  if(!cartToken&&nonce)headers.set("Nonce",nonce);
+  const response=await fetch(`${upstream}/cart`,{headers,cache:"no-store"});
+  const cart=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error("store_unavailable");
+  const ids=Array.isArray(cart?.payment_methods)?cart.payment_methods.map((x:any)=>String(x)):[];
+  const methods=ids.map((id:string)=>({id,label:labelFor(id),enabled:true,status:"ready",missing:[],mode:"woocommerce_hosted_native_webview" as const}));
+  return NextResponse.json({
+    status:"ready",
+    ready_count:methods.length,
+    total_count:methods.length,
+    source:"woocommerce_store_api",
+    architecture:"woocommerce_hosted_native_webview",
+    methods
+  },{headers:{"cache-control":"no-store"}});
+ }catch{
+  return NextResponse.json({status:"partial",ready_count:0,total_count:0,source:"woocommerce_store_api",architecture:"woocommerce_hosted_native_webview",methods:[],error:"store_unavailable"},{status:503,headers:{"cache-control":"no-store"}});
+ }
 }
