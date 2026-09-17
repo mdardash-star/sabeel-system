@@ -1,4 +1,4 @@
-import {syncWooOrderPayment} from "../../woo-runtime";
+import {syncWooOrderPayment} from "../woo-runtime";
 
 type PaymentEvent={provider:string;providerReference:string;orderId:string;status:"paid"|"pending"|"failed"|"cancelled";rawStatus:string;receivedAt:string};
 
