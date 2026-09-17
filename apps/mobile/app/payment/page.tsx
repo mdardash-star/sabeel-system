@@ -9,19 +9,24 @@ export default function PaymentPage(){
   const [error,setError]=useState("");
 
   useEffect(()=>{
-    const raw=sessionStorage.getItem("subil_pending_payment_url")||"";
-    if(!raw){setError("لا توجد عملية دفع معلقة");return}
-    try{
-      const parsed=new URL(raw);
-      if(parsed.protocol!=="https:"){throw new Error("invalid")}
-      setUrl(parsed.toString());
-    }catch{
-      setError("تعذر فتح رابط الدفع الآمن");
-    }
+    let active=true;
+    (async()=>{
+      try{
+        const response=await fetch("/api/payment-target",{cache:"no-store"});
+        const payload=await response.json().catch(()=>({}));
+        if(!response.ok)throw new Error(payload?.error||"payment_target_missing");
+        const parsed=new URL(String(payload?.url||""));
+        if(parsed.protocol!=="https:")throw new Error("invalid_payment_url");
+        if(active)setUrl(parsed.toString());
+      }catch{
+        if(active)setError("تعذر تجهيز صفحة الدفع. ارجع إلى السلة وحاول مرة أخرى.");
+      }
+    })();
+    return()=>{active=false};
   },[]);
 
-  function closePayment(){
-    sessionStorage.removeItem("subil_pending_payment_url");
+  async function closePayment(){
+    await fetch("/api/payment-target",{method:"DELETE"}).catch(()=>{});
     router.replace("/store");
   }
 
@@ -32,10 +37,10 @@ export default function PaymentPage(){
         <div>
           <small style={s.kicker}>سبيل</small>
           <h1 style={s.title}>الدفع الآمن</h1>
-          <p style={s.note}>أكمل الدفع داخل تطبيق العميل عبر بوابة الدفع الرسمية.</p>
+          <p style={s.note}>أكمل الدفع من داخل تطبيق العميل عبر بوابة الدفع الرسمية.</p>
         </div>
       </header>
-      {error?<div style={s.error}>{error}</div>:url?<iframe title="الدفع الآمن" src={url} style={s.frame} allow="payment *; clipboard-read; clipboard-write"/>:<div style={s.loading}>جاري تجهيز صفحة الدفع</div>}
+      {error?<div style={s.error}>{error}</div>:url?<iframe title="الدفع الآمن" src={url} style={s.frame} allow="payment *; clipboard-read; clipboard-write" sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-top-navigation-by-user-activation"/>:<div style={s.loading}>جاري تجهيز صفحة الدفع</div>}
     </section>
   </main>
 }
