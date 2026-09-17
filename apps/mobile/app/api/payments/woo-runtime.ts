@@ -2,9 +2,9 @@ type CartLine={id:number;quantity:number;variation?:Array<{attribute:string;valu
 type WooAddress={first_name?:string;last_name?:string;address_1?:string;address_2?:string;city?:string;state?:string;postcode?:string;country?:string;email?:string;phone?:string};
 
 function config(){
- const base=String(process.env.SUBIL_WOO_REST_API_BASE||"https://subil.store/wp-json/wc/v3").replace(/\/$/,"");
- const key=String(process.env.WOO_CONSUMER_KEY||"").trim();
- const secret=String(process.env.WOO_CONSUMER_SECRET||"").trim();
+ const base=String(process.env.SUBIL_WOO_REST_API_BASE||process.env.WOOCOMMERCE_BASE_URL||"https://subil.store/wp-json/wc/v3").replace(/\/$/,"");
+ const key=String(process.env.WOO_CONSUMER_KEY||process.env.WOOCOMMERCE_CONSUMER_KEY||"").trim();
+ const secret=String(process.env.WOO_CONSUMER_SECRET||process.env.WOOCOMMERCE_CONSUMER_SECRET||"").trim();
  if(!key||!secret)throw new Error("woocommerce_runtime_not_configured");
  return {base,authorization:`Basic ${Buffer.from(`${key}:${secret}`).toString("base64")}`};
 }
