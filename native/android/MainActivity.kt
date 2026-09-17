@@ -2,14 +2,20 @@ package com.subil.customer
 
 import android.annotation.SuppressLint
 import android.app.Dialog
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.view.Gravity
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import org.json.JSONObject
 
@@ -66,6 +72,7 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun openPaymentDialog(id: String, checkoutUrl: String) {
         val dialog = Dialog(this)
+        val container = FrameLayout(this)
         val paymentView = WebView(this)
         paymentView.settings.javaScriptEnabled = true
         paymentView.settings.domStorageEnabled = true
@@ -83,6 +90,26 @@ class MainActivity : ComponentActivity() {
             resolve(id, status, message)
         }
 
+        container.addView(paymentView, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        val closeButton = Button(this).apply {
+            text = "إغلاق"
+            setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
+            setOnClickListener { finish("cancelled") }
+        }
+        val closeParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            setMargins(24, 48, 0, 0)
+        }
+        container.addView(closeButton, closeParams)
+
         paymentView.webChromeClient = WebChromeClient()
         paymentView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -91,12 +118,17 @@ class MainActivity : ComponentActivity() {
                 val host = uri.host?.lowercase() ?: ""
                 val path = uri.path?.lowercase() ?: ""
                 if ((host == "subil.store" || host.endsWith(".subil.store")) && path.contains("order-received")) {
-                    finish("returned")
+                    finish("pending")
                 }
             }
+
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                super.onReceivedError(view, request, error)
+                if (request?.isForMainFrame == true) finish("failed", "payment_page_load_failed")
+            }
         }
-        dialog.setContentView(paymentView)
-        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+
+        dialog.setContentView(container)
         dialog.setOnCancelListener { finish("cancelled") }
         dialog.show()
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)

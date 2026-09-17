@@ -95,7 +95,7 @@ struct SubilWebView: UIViewRepresentable {
             closePayment(status: "cancelled")
         }
 
-        private func closePayment(status: String?) {
+        private func closePayment(status: String?, message: String? = nil) {
             let id = pendingPaymentId
             paymentWebView?.stopLoading()
             paymentWebView?.navigationDelegate = nil
@@ -104,7 +104,7 @@ struct SubilWebView: UIViewRepresentable {
             paymentWebView = nil
             paymentContainer = nil
             pendingPaymentId = nil
-            if let id, let status { resolve(id: id, status: status, message: nil) }
+            if let id, let status { resolve(id: id, status: status, message: message) }
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -112,8 +112,18 @@ struct SubilWebView: UIViewRepresentable {
             let host = (url.host ?? "").lowercased()
             let path = url.path.lowercased()
             if (host == "subil.store" || host.hasSuffix(".subil.store")) && path.contains("order-received") {
-                closePayment(status: "returned")
+                closePayment(status: "pending")
             }
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            guard webView === paymentWebView else { return }
+            closePayment(status: "failed", message: "payment_page_load_failed")
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            guard webView === paymentWebView else { return }
+            closePayment(status: "failed", message: "payment_page_load_failed")
         }
 
         private func resolve(id: String, status: String, message: String?) {
