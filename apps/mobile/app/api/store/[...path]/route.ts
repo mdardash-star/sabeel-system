@@ -11,6 +11,7 @@ const allowed=[
 ];
 
 function safePath(parts:string[]){const path=parts.join("/");return allowed.some(rule=>rule.test(path))?path:null}
+function paymentMode(method:string){const value=(method||"").toLowerCase();return value.includes("tap")||value.includes("amwal")?"direct":"embedded"}
 
 async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}>}){
   const {path:parts}=await context.params;
@@ -27,6 +28,11 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
   if(request.method!=="GET"&&request.method!=="HEAD")headers.set("content-type","application/json");
 
   const body=request.method==="GET"||request.method==="HEAD"?undefined:await request.text();
+  let selectedPaymentMethod="";
+  if(path==="checkout"&&body){
+    try{selectedPaymentMethod=String(JSON.parse(body)?.payment_method||"")}catch{}
+  }
+
   let upstreamResponse:Response;
   try{
     upstreamResponse=await fetch(target,{method:request.method,headers,body:body||undefined,cache:"no-store",redirect:"manual"});
@@ -38,6 +44,7 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
   const raw=await upstreamResponse.text();
   let output=raw;
   let paymentTarget="";
+  let mode="embedded";
 
   if(path==="checkout"&&contentType.includes("application/json")&&raw){
     try{
@@ -47,6 +54,7 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
         const parsed=new URL(redirect);
         if(parsed.protocol==="https:"){
           paymentTarget=parsed.toString();
+          mode=paymentMode(selectedPaymentMethod);
           payload.payment_result.redirect_url="/payment";
           output=JSON.stringify(payload);
         }
@@ -60,7 +68,10 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
   const cookieOptions={httpOnly:true,secure:true,sameSite:"lax" as const,path:"/",maxAge:60*60*24*7};
   if(nextToken)response.cookies.set("subil_woo_cart_token",nextToken,cookieOptions);
   if(nextNonce)response.cookies.set("subil_woo_nonce",nextNonce,cookieOptions);
-  if(paymentTarget)response.cookies.set("subil_payment_target",paymentTarget,{httpOnly:true,secure:true,sameSite:"lax",path:"/",maxAge:60*20});
+  if(paymentTarget){
+    response.cookies.set("subil_payment_target",paymentTarget,{httpOnly:true,secure:true,sameSite:"lax",path:"/",maxAge:60*20});
+    response.cookies.set("subil_payment_mode",mode,{httpOnly:true,secure:true,sameSite:"lax",path:"/",maxAge:60*20});
+  }
   return response;
 }
 
