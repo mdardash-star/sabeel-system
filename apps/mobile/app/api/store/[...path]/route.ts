@@ -36,13 +36,31 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
 
   const contentType=upstreamResponse.headers.get("content-type")||"application/json";
   const raw=await upstreamResponse.text();
-  const response=new NextResponse(raw,{status:upstreamResponse.status,headers:{"content-type":contentType,"cache-control":"no-store"}});
+  let output=raw;
+  let paymentTarget="";
 
+  if(path==="checkout"&&contentType.includes("application/json")&&raw){
+    try{
+      const payload=JSON.parse(raw);
+      const redirect=String(payload?.payment_result?.redirect_url||"");
+      if(redirect){
+        const parsed=new URL(redirect);
+        if(parsed.protocol==="https:"){
+          paymentTarget=parsed.toString();
+          payload.payment_result.redirect_url="/payment";
+          output=JSON.stringify(payload);
+        }
+      }
+    }catch{}
+  }
+
+  const response=new NextResponse(output,{status:upstreamResponse.status,headers:{"content-type":contentType,"cache-control":"no-store"}});
   const nextToken=upstreamResponse.headers.get("Cart-Token");
   const nextNonce=upstreamResponse.headers.get("Nonce");
   const cookieOptions={httpOnly:true,secure:true,sameSite:"lax" as const,path:"/",maxAge:60*60*24*7};
   if(nextToken)response.cookies.set("subil_woo_cart_token",nextToken,cookieOptions);
   if(nextNonce)response.cookies.set("subil_woo_nonce",nextNonce,cookieOptions);
+  if(paymentTarget)response.cookies.set("subil_payment_target",paymentTarget,{httpOnly:true,secure:true,sameSite:"lax",path:"/",maxAge:60*20});
   return response;
 }
 
