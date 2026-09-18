@@ -605,6 +605,28 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{customers:suggestions,segments});
   }
 
+  const profitDraftMatch=url.match(/^\/api\/v1\/marketing\/products\/([^/]+)\/profit-action-draft$/);
+  if(method==='POST'&&profitDraftMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const productId=profitDraftMatch[1],action=cleanOptional(body.action),productName=cleanLongText(body.productName,200),reason=cleanLongText(body.reason,500);
+    const allowed=['push_cross_sell','feature_in_bundles','review_before_spend','monitor'];
+    if(!allowed.includes(action)||!productName)return response(400,{error:'invalid_profit_action'});
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.profit_action_draft' AND entity_type='woocommerce_product' AND entity_id=$1 AND data->>'action'=$2 AND created_at>=now()-interval '30 days' LIMIT 1`,[productId,action])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.profit_action_draft','woocommerce_product',$2,$3::jsonb)`,[context.userId,productId,JSON.stringify({action,productName,reason,status:'draft',createdAt:new Date().toISOString()})]);
+    return response(201,{draft:{productId,productName,action,reason,status:'draft'}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/profit-actions/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT al.id,al.entity_id AS product_id,al.data->>'productName' AS product_name,al.data->>'action' AS action,al.created_at,
+      COALESCE((SELECT SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot)) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.product_id::text=al.entity_id AND o.paid_at>al.created_at),0)::numeric(14,2) AS profit_after,
+      COALESCE((SELECT COUNT(DISTINCT o.id) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.product_id::text=al.entity_id AND o.paid_at>al.created_at),0)::integer AS orders_after
+      FROM audit_log al WHERE al.action='ai.profit_action_draft' ORDER BY al.created_at DESC LIMIT 100`)).rows;
+    return response(200,{items:rows,summary:{drafts:rows.length,withOrders:rows.filter(x=>Number(x.orders_after)>0).length,profitAfter:rows.reduce((s,x)=>s+Number(x.profit_after||0),0)}});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/profit-decisions'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const products=(await db.query(`SELECT oi.product_id,oi.product_name,
