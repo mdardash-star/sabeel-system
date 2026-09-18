@@ -21,6 +21,13 @@ export async function scanMarketingAlerts(db,{actorUserId=null,organizationId=DE
   if(atRisk>0)alerts.push({fingerprint:'marketing_customers_at_risk',severity:atRisk>=10?'high':'medium',title:'عملاء معرضون للفقد',summary:`تم رصد ${atRisk} عميلًا متكررًا دون طلب حديث خلال 90 يومًا.`,action:'جهّز رحلة Win-back للموافقين على التسويق واربطها بالصيانة أو المنتج التالي المناسب.',metrics:{atRisk,dormant:Number(store?.customers?.dormant90d||0)}});
   const warnings=commerceData?.dataQuality?.warnings||[];
   if(warnings.length)alerts.push({fingerprint:'marketing_data_quality',severity:'medium',title:'تحذير جودة بيانات المتجر',summary:`يوجد ${warnings.length} تحذير جودة في بيانات SUBIL Commerce.`,action:'استبعد القيم الشاذة من القرار حتى تصحيح المصدر وراجع الطلبات أو المنتجات المشار إليها.',metrics:{warnings,excludedProducts:commerceData?.dataQuality?.excludedProducts||[]}});
+  const safeActions=[];
+  if(store?.products?.seo?.opportunities?.length){
+    const target=store.products.seo.opportunities.find(x=>Array.isArray(x.issues)&&x.issues.length>0);
+    if(target&&woo.configured){
+      try{const result=await woo.applySafeSeoPatch(target.id);safeActions.push({type:'seo_apply',productId:target.id,changed:Boolean(result.changed)});}catch{}
+    }
+  }
   const rows=[];
   for(const a of alerts){
    rows.push((await c.query(`INSERT INTO ai_insights(organization_id,fingerprint,detected_on,domain,severity,title,summary,recommended_action,metrics)
@@ -29,6 +36,6 @@ export async function scanMarketingAlerts(db,{actorUserId=null,organizationId=DE
     RETURNING *`,[organizationId,a.fingerprint,date,a.severity,a.title,a.summary,a.action,JSON.stringify(a.metrics)])).rows[0]);
   }
   if(actorUserId)await c.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.marketing_alert_scan','ai_insight','batch',$2::jsonb)`,[actorUserId,JSON.stringify({count:rows.length,date})]);
-  return{alerts:rows,metrics:{aov,orders,coverage,seoHigh,atRisk,dataQualityWarnings:warnings.length}};
+  return{alerts:rows,safeActions,metrics:{aov,orders,coverage,seoHigh,atRisk,dataQualityWarnings:warnings.length}};
  });
 }
