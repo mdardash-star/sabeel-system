@@ -200,6 +200,35 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/operational-readiness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient(),publisher=createWordPressPublisher(),sender=createMarketingChannelSender();
+    const [wooOrders,attrOrders,lastPersist,lastBackfill]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS total FROM orders WHERE external_source='woocommerce'`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution oa JOIN orders o ON o.id=oa.order_id WHERE o.external_source='woocommerce'`),
+      db.query(`SELECT created_at FROM audit_log WHERE action='woocommerce.order_persisted' ORDER BY created_at DESC LIMIT 1`),
+      db.query(`SELECT created_at FROM audit_log WHERE action='woocommerce.backfill_batch' ORDER BY created_at DESC LIMIT 1`)
+    ]);
+    const total=Number(wooOrders.rows[0]?.total||0),attributed=Number(attrOrders.rows[0]?.total||0);
+    const checks=[
+      {key:'woocommerce_api',label:'WooCommerce API',ready:woo.configured,critical:true},
+      {key:'woocommerce_webhook',label:'WooCommerce Webhook',ready:Boolean(process.env.WOOCOMMERCE_WEBHOOK_SECRET),critical:true},
+      {key:'database_orders',label:'WooCommerce Orders Persisted',ready:total>0,critical:true},
+      {key:'attribution',label:'Attribution Coverage',ready:total===0?false:(attributed/total)>=0.5,critical:false},
+      {key:'historical_sync',label:'Historical Sync',ready:woo.configured,critical:false},
+      {key:'wordpress_publisher',label:'WordPress Publisher',ready:publisher.configured,critical:false},
+      {key:'whatsapp',label:'WhatsApp Provider',ready:sender.whatsappConfigured,critical:false},
+      {key:'email',label:'Email Provider',ready:sender.emailConfigured,critical:false},
+      {key:'otp_sender',label:'OTP Sender',ready:Boolean(process.env.OTP_SENDER_URL&&process.env.OTP_SENDER_API_KEY)||String(process.env.SUBIL_OTP_TEST_MODE||'').toLowerCase()==='true',critical:true}
+    ];
+    const blockers=checks.filter(x=>x.critical&&!x.ready),warnings=checks.filter(x=>!x.critical&&!x.ready);
+    const score=Math.round(checks.filter(x=>x.ready).length/checks.length*100);
+    return response(200,{score,status:blockers.length?'blocked':warnings.length?'partial':'ready',checks,blockers,warnings,metrics:{
+      storedWooOrders:total,attributedWooOrders:attributed,attributionRate:total?attributed/total*100:0,
+      lastPersistedAt:lastPersist.rows[0]?.created_at||null,lastBackfillAt:lastBackfill.rows[0]?.created_at||null
+    }});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/integration-health'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const woo=createWooCommerceCatalogClient(),publisher=createWordPressPublisher(),sender=createMarketingChannelSender();
