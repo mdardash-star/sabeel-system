@@ -37,7 +37,12 @@ fetch(api+"/api/v1/marketing/abandoned-carts/stats",{headers:{Authorization:"Bea
 ["Push",channels?.push?.configured],
 ["WhatsApp",channels?.whatsapp?.configured],
 ["Email",channels?.email?.configured]
-].map(x=><div className="segment-row" key={x[0]}><strong>{x[0]}</strong><span>{x[1]?"جاهز":"بانتظار الربط"}</span></div>)}</article></section><section className="panel" style={{marginTop:16}}><div className="panel-head"><div><h2>Next Best Action</h2><p>الإجراء التسويقي المقترح لكل شريحة</p></div></div>{[
+].map(x=><div className="segment-row" key={x[0]}><strong>{x[0]}</strong><span>{x[1]?"جاهز":"بانتظار الربط"}</span></div>)}</article></section><section className="marketing-grid" style={{marginTop:16}}><article className="panel"><div className="panel-head"><div><h2>Cross-sell Intelligence</h2><p>المنتجات التي تظهر معًا في الطلبات</p></div></div>{(storeIntel?.products?.crossSellPairs||[]).slice(0,8).map((x:any,i:number)=><div className="segment-row" key={i}><div><strong>{x.a?.name||x.a?.id}</strong><small>مع {x.b?.name||x.b?.id}</small></div><span>{x.orders} طلبات</span></div>)}</article><article className="panel"><div className="panel-head"><div><h2>Upsell Playbook</h2><p>قواعد رفع قيمة الطلب</p></div></div>{[
+["جهاز تحلية","إظهار البرادة + عقد الصيانة + الباقات"],
+["فلتر مركزي","إظهار طقم الشمعات + فلتر الشاور"],
+["برادة ذاتية","إظهار جهاز التحلية والباقات المنزلية"],
+["عميل مرتفع القيمة","إظهار VIP وخيارات الصيانة"]
+].map(x=><div className="segment-row" key={x[0]}><strong>{x[0]}</strong><span>{x[1]}</span></div>)}</article></section><section className="panel" style={{marginTop:16}}><div className="panel-head"><div><h2>Next Best Action</h2><p>الإجراء التسويقي المقترح لكل شريحة</p></div></div>{[
 ["VIP","عروض أولوية + Referral + صيانة مميزة"],
 ["مرتفعو القيمة","Cross-sell / Upsell حسب مشترياتهم"],
 ["متكررون","برنامج ولاء ومكافأة إعادة الشراء"],
