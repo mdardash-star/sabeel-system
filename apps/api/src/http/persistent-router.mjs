@@ -200,6 +200,42 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/attribution-repair-queue'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT o.id,o.external_order_id,o.paid_at,o.total_ex_vat,
+      EXTRACT(EPOCH FROM (now()-COALESCE(o.paid_at,o.created_at)))/86400 AS age_days
+      FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id
+      WHERE o.external_source='woocommerce' AND oa.order_id IS NULL
+      ORDER BY o.total_ex_vat DESC NULLS LAST,o.paid_at ASC NULLS LAST LIMIT 50`)).rows.map(x=>{
+        const value=Number(x.total_ex_vat||0),ageDays=Number(x.age_days||0);
+        let priority='low';
+        if(value>=1000||ageDays>=180)priority='high'; else if(value>=400||ageDays>=90)priority='medium';
+        return{...x,totalExVat:value,ageDays,priority};
+      });
+    return response(200,{queue:rows,summary:{total:rows.length,high:rows.filter(x=>x.priority==='high').length,medium:rows.filter(x=>x.priority==='medium').length}});
+  }
+
+  const attributionRecheckMatch=url.match(/^\/api\/v1\/marketing\/orders\/([^/]+)\/attribution-recheck$/);
+  if(method==='POST'&&attributionRecheckMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const internal=(await db.query(`SELECT * FROM orders WHERE id=$1 AND external_source='woocommerce' LIMIT 1`,[attributionRecheckMatch[1]])).rows[0];
+    if(!internal)return response(404,{error:'woocommerce_order_not_found'});
+    const already=(await db.query(`SELECT 1 FROM order_attribution WHERE order_id=$1 LIMIT 1`,[internal.id])).rows[0];
+    if(already)return response(200,{repaired:false,reason:'already_attributed'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const raw=await woo.getRawOrder(internal.external_order_id);
+      const before=(await db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution WHERE order_id=$1`,[internal.id])).rows[0]?.total||0;
+      await persistPaidServiceOrder(db,raw,{organizationId:context.tenantId||undefined});
+      const after=(await db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution WHERE order_id=$1`,[internal.id])).rows[0]?.total||0;
+      const repaired=Number(after)>Number(before);
+      await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'woocommerce.attribution_recheck','order',$2,$3::jsonb)`,[context.userId,internal.id,JSON.stringify({externalOrderId:internal.external_order_id,repaired})]);
+      return response(200,{repaired,reason:repaired?'utm_found':'no_real_utm_found'});
+    }catch(error){return response(502,{error:'woocommerce_attribution_recheck_failed'});}
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/attribution-coverage'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const [summary,sources,unattributed]=await Promise.all([
