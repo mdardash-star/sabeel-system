@@ -436,6 +436,23 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{generatedAt:new Date().toISOString(),headline,summary,actions:actions.slice(0,3)});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/autopilot/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    let store=null;if(woo.configured){try{store=await woo.getStoreIntelligence()}catch{}}
+    const seoRuns=(await db.query(`SELECT COUNT(*)::integer AS runs,
+      COUNT(*) FILTER(WHERE COALESCE((data->>'changed')::boolean,false)=true)::integer AS changed_runs
+      FROM audit_log WHERE action='ai.autopilot_seo_apply' AND created_at>=now()-interval '30 days'`)).rows[0]||{};
+    const winback=(await db.query(`SELECT COUNT(*)::integer AS drafts,
+      COUNT(*) FILTER(WHERE mc.status IN('queued','completed'))::integer AS progressed,
+      COALESCE(SUM(cr.cnt),0)::integer AS recipients
+      FROM marketing_campaigns mc
+      LEFT JOIN LATERAL(SELECT COUNT(*)::integer AS cnt FROM campaign_recipients WHERE campaign_id=mc.id)cr ON true
+      WHERE mc.name='Win-back 90 يوم' AND mc.created_at>=now()-interval '30 days'`)).rows[0]||{};
+    const latestSeo=(await db.query(`SELECT entity_id,data,created_at FROM audit_log WHERE action='ai.autopilot_seo_apply' ORDER BY created_at DESC LIMIT 10`)).rows;
+    return response(200,{seo:{runs:Number(seoRuns.runs||0),changedRuns:Number(seoRuns.changed_runs||0),currentBacklog:Number(store?.products?.seo?.needsWork||0),currentHighPriority:Number(store?.products?.seo?.highPriority||0),latest:latestSeo},winback:{drafts:Number(winback.drafts||0),progressed:Number(winback.progressed||0),recipients:Number(winback.recipients||0)}});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/autopilot/history'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const rows=(await db.query(`SELECT id,actor_user_id,action,entity_type,entity_id,data,created_at
