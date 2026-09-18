@@ -28,7 +28,7 @@ export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh', or
     if (!customer) {
       customer = (await client.query(
         `INSERT INTO customers (name,organization_id) VALUES ($1,$2) RETURNING *`,
-        [mapped.customer.name, organizationId]
+        [([order.billing?.first_name,order.billing?.last_name].filter(Boolean).join(' ').trim()||identity.email||identity.phone||`عميل WooCommerce ${order.id}`), organizationId]
       )).rows[0];
       await client.query(
         `INSERT INTO customer_external_identities (customer_id, source, identity_key, external_customer_id, organization_id)
@@ -39,10 +39,10 @@ export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh', or
 
     const persistedOrder = (await client.query(
       `INSERT INTO orders (external_source, external_order_id, customer_id, paid_at, total_ex_vat, organization_id)
-       VALUES ('woocommerce', $1, $2, now(), $3, $4)
+       VALUES ('woocommerce', $1, $2, $5, $3, $4)
        ON CONFLICT (organization_id, external_source, external_order_id) DO UPDATE SET customer_id=EXCLUDED.customer_id
        RETURNING *`,
-      [String(order.id), customer.id, Number(order.total || 0) / 1.15, organizationId]
+      [String(order.id), customer.id, Number(order.total || 0) / 1.15, organizationId, (order.date_paid_gmt||order.date_paid||order.date_completed_gmt||order.date_completed||new Date().toISOString())]
     )).rows[0];
 
     for (const item of order.line_items || []) {
