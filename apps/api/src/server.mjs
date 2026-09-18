@@ -13,6 +13,7 @@ import { createOtpSender } from './integrations/otp-sender.mjs';
 import { ingestWooCommerceOrderWebhook } from './integrations/woocommerce-ingress.mjs';
 import { createMarketingChannelSender } from './integrations/marketing-channel-sender.mjs';
 import { processMarketingBatch } from './notifications/marketing-channels.mjs';
+import { scanMarketingAlerts } from './ai/marketing-alerts.mjs';
 
 const WOOCOMMERCE_WEBHOOK_PATH = '/api/v1/integrations/woocommerce/orders';
 
@@ -282,8 +283,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.log(JSON.stringify({worker:'marketing',status:'disabled',reason:'providers_not_configured'}));
   }
 
+  const alertInterval=Math.max(3600000,Number(process.env.MARKETING_ALERT_SCAN_INTERVAL_MS||21600000));
+  const runMarketingAlerts=()=>scanMarketingAlerts(db,{}).then(r=>console.log(JSON.stringify({worker:'marketing-alerts',count:r.alerts.length}))).catch(e=>console.error(JSON.stringify({worker:'marketing-alerts',error:e.message})));
+  runMarketingAlerts();
+  const marketingAlertTimer=setInterval(runMarketingAlerts,alertInterval);
+
   const shutdown = () => {
     if(marketingWorkerTimer)clearInterval(marketingWorkerTimer);
+    if(marketingAlertTimer)clearInterval(marketingAlertTimer);
     server.close(() => {
       Promise.resolve(db?.close?.()).finally(() => process.exit(0));
     });
