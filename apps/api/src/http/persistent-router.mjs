@@ -200,6 +200,22 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/integration-health'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient(),publisher=createWordPressPublisher(),sender=createMarketingChannelSender();
+    const recentWebhook=(await db.query(`SELECT created_at FROM audit_log WHERE action='woocommerce.order_persisted' ORDER BY created_at DESC LIMIT 1`)).rows[0]||null;
+    const recentBackfill=(await db.query(`SELECT created_at FROM audit_log WHERE action='woocommerce.backfill_batch' ORDER BY created_at DESC LIMIT 1`)).rows[0]||null;
+    return response(200,{integrations:{
+      woocommerceApi:{configured:woo.configured},
+      woocommerceWebhook:{configured:Boolean(process.env.WOOCOMMERCE_WEBHOOK_SECRET),lastPersistedAt:recentWebhook?.created_at||null},
+      wordpressPublisher:{configured:publisher.configured},
+      whatsapp:{configured:sender.whatsappConfigured},
+      email:{configured:sender.emailConfigured},
+      push:{configured:Boolean(process.env.PUSH_PROVIDER_URL&&process.env.PUSH_PROVIDER_API_KEY)},
+      historicalSync:{ready:woo.configured,lastBatchAt:recentBackfill?.created_at||null}
+    }});
+  }
+
   if (method === 'GET' && url === '/api/v1/marketing/channels/status') {
     if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
     const sender=createMarketingChannelSender();
