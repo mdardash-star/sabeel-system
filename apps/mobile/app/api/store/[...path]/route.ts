@@ -11,7 +11,7 @@ const allowed=[
 ];
 
 function safePath(parts:string[]){const path=parts.join("/");return allowed.some(rule=>rule.test(path))?path:null}
-function paymentMode(method:string){const value=(method||"").toLowerCase();return value.includes("tabby")||value.includes("tamara")?"direct":"embedded"}
+function paymentMode(method:string){const value=(method||"").toLowerCase();return value.includes("tabby")||value.includes("tamara")||value.includes("amwal")?"direct":"embedded"}
 
 async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}>}){
   const {path:parts}=await context.params;
