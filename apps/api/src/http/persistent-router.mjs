@@ -19,6 +19,7 @@ import { scanFinanceAnomalies, updateFinanceAnomaly } from '../ai/finance.mjs';
 import { scanMarketingAlerts } from '../ai/marketing-alerts.mjs';
 import { rateCustomerJob } from '../crm/customer-portal.mjs';
 import { createWooCommerceCatalogClient } from '../integrations/woocommerce-catalog.mjs';
+import { persistPaidServiceOrder } from '../integrations/woocommerce-persistence.mjs';
 import { createMarketingChannelSender } from '../integrations/marketing-channel-sender.mjs';
 import { createWordPressPublisher } from '../integrations/wordpress-publisher.mjs';
 import { createSubilCommerceAnalyticsClient } from '../integrations/subil-commerce-analytics.mjs';
