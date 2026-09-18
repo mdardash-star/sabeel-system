@@ -64,6 +64,10 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
   }
 
   const response=new NextResponse(output,{status:upstreamResponse.status,headers:{"content-type":contentType,"cache-control":"no-store"}});
+  if(path==="checkout"&&upstreamResponse.status===409){
+    response.cookies.set("subil_woo_cart_token","",{httpOnly:true,secure:true,sameSite:"lax",path:"/",maxAge:0});
+    response.cookies.set("subil_woo_nonce","",{httpOnly:true,secure:true,sameSite:"lax",path:"/",maxAge:0});
+  }
   const nextToken=upstreamResponse.headers.get("Cart-Token");
   const nextNonce=upstreamResponse.headers.get("Nonce");
   const cookieOptions={httpOnly:true,secure:true,sameSite:"lax" as const,path:"/",maxAge:60*60*24*7};
