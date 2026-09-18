@@ -605,6 +605,26 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{customers:suggestions,segments});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/revenue-forecast'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [r30,r90,topCustomer,topProduct,total90]=await Promise.all([
+      db.query(`SELECT COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue,COUNT(*)::integer AS orders FROM orders WHERE paid_at>=now()-interval '30 days'`),
+      db.query(`SELECT COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue,COUNT(*)::integer AS orders FROM orders WHERE paid_at>=now()-interval '90 days'`),
+      db.query(`SELECT c.id,c.name,COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue FROM customers c JOIN orders o ON o.customer_id=c.id WHERE o.paid_at>=now()-interval '90 days' GROUP BY c.id,c.name ORDER BY revenue DESC LIMIT 1`),
+      db.query(`SELECT oi.product_id,oi.product_name,COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.paid_at>=now()-interval '90 days' GROUP BY oi.product_id,oi.product_name ORDER BY revenue DESC LIMIT 1`),
+      db.query(`SELECT COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue FROM orders WHERE paid_at>=now()-interval '90 days'`)
+    ]);
+    const rev30=Number(r30.rows[0]?.revenue||0),rev90=Number(r90.rows[0]?.revenue||0),daily30=rev30/30,daily90=rev90/90;
+    const blended=(daily30*0.65)+(daily90*0.35),forecast30=blended*30,forecast90=blended*90,total=Number(total90.rows[0]?.revenue||0);
+    const tc=topCustomer.rows[0]||null,tp=topProduct.rows[0]||null;
+    const customerShare=tc&&total?Number(tc.revenue)/total*100:0,productShare=tp&&total?Number(tp.revenue)/total*100:0;
+    const risks=[];
+    if(customerShare>35)risks.push({type:'customer_concentration',priority:'high',message:`أعلى عميل يمثل ${customerShare.toFixed(1)}% من إيراد آخر 90 يومًا.`});
+    if(productShare>50)risks.push({type:'product_concentration',priority:'high',message:`أعلى منتج يمثل ${productShare.toFixed(1)}% من إيراد آخر 90 يومًا.`});
+    if(daily30<daily90*0.8&&rev90>0)risks.push({type:'revenue_slowdown',priority:'medium',message:'متوسط الإيراد اليومي آخر 30 يومًا أقل بأكثر من 20% من متوسط 90 يومًا.'});
+    return response(200,{actual:{revenue30:rev30,revenue90:rev90,orders30:Number(r30.rows[0]?.orders||0),orders90:Number(r90.rows[0]?.orders||0),daily30,daily90},forecast:{days30:forecast30,days90:forecast90,method:'65% last30 + 35% last90 daily average'},concentration:{topCustomer:tc?{...tc,share:customerShare}:null,topProduct:tp?{...tp,share:productShare}:null},risks});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/revenue-intelligence'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const [summary,products,channels,segments]=await Promise.all([
