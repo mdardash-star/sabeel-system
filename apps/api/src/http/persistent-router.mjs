@@ -20,6 +20,7 @@ import { rateCustomerJob } from '../crm/customer-portal.mjs';
 import { createWooCommerceCatalogClient } from '../integrations/woocommerce-catalog.mjs';
 import { createMarketingChannelSender } from '../integrations/marketing-channel-sender.mjs';
 import { createWordPressPublisher } from '../integrations/wordpress-publisher.mjs';
+import { createSubilCommerceAnalyticsClient } from '../integrations/subil-commerce-analytics.mjs';
 import { disablePushSubscription, getNotificationSettings, savePushSubscription, updateNotificationSettings } from '../notifications/push.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
@@ -238,6 +239,14 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       const item=await createContent(db,{title,slug,contentType:'article',channel:'website',body:bodyHtml,primaryKeyword:keyword,metaDescription,scheduledAt:null,actorUserId:context.userId});
       return response(201,{content:item,sourceProduct:product});
     }catch(error){return response(502,{error:'content_draft_creation_failed'});}
+  }
+
+  if (method === 'GET' && url === '/api/v1/marketing/store/commerce-analytics') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const analytics=createSubilCommerceAnalyticsClient();
+    if(!analytics.configured)return response(503,{error:'commerce_analytics_not_configured'});
+    try{return response(200,{analytics:await analytics.getAnalytics()});}
+    catch(error){return response(502,{error:'commerce_analytics_unavailable'});}
   }
 
   if (method === 'GET' && url === '/api/v1/marketing/store/content-ideas') {
