@@ -71,18 +71,36 @@ export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_
       const atRiskRows=customerRows.filter(x=>x.orders>=2&&x.lastOrderAt&&new Date(x.lastOrderAt).getTime()<recentCutoff);
       const topCustomers=[...customerRows].sort((a,b)=>b.revenue-a.revenue).slice(0,10);
       const topProducts=[...products].sort((a,b)=>(b.totalSales||0)-(a.totalSales||0)).slice(0,8);
+      const seoOpportunities=products.map(product=>{
+        const issues=[];
+        if(product.name.length<18)issues.push('title_too_short');
+        if(product.name.length>80)issues.push('title_too_long');
+        if(!product.shortDescription||product.shortDescription.length<80)issues.push('short_description_weak');
+        if(!product.image)issues.push('image_missing');
+        if(!product.imageAlt)issues.push('image_alt_missing');
+        const score=Math.max(0,100-issues.length*20);
+        return {id:product.id,name:product.name,score,issues,priority:issues.length>=3?'high':issues.length===2?'medium':issues.length===1?'low':'healthy'};
+      }).sort((a,b)=>a.score-b.score);
+      const seoSummary={
+        scanned:products.length,
+        needsWork:seoOpportunities.filter(x=>x.issues.length).length,
+        highPriority:seoOpportunities.filter(x=>x.priority==='high').length,
+        missingAlt:seoOpportunities.filter(x=>x.issues.includes('image_alt_missing')).length,
+        weakDescription:seoOpportunities.filter(x=>x.issues.includes('short_description_weak')).length,
+        opportunities:seoOpportunities.slice(0,20)
+      };
       return {
         snapshotAt:new Date().toISOString(),
         orders:{sample:orders.length,paid:paid.length,revenue,aov},
         customers:{sample:customers.length,repeatCustomers,highValueCustomers,vipCustomers,dormant90d:dormantRows.length,atRisk:atRiskRows.length,topCustomers},
-        products:{sample:products.length,topProducts}
+        products:{sample:products.length,topProducts,seo:seoSummary}
       };
     }
   };
 }
 
 function mapProduct(p){
-  return {id:String(p.id),name:String(p.name||''),slug:String(p.slug||''),sku:String(p.sku||''),price:Number(p.price||0),regularPrice:Number(p.regular_price||0),salePrice:p.sale_price?Number(p.sale_price):null,onSale:Boolean(p.on_sale),stockStatus:String(p.stock_status||''),stockQuantity:p.stock_quantity==null?null:Number(p.stock_quantity),totalSales:Number(p.total_sales||0),image:p.images?.[0]?.src||null,categories:Array.isArray(p.categories)?p.categories.map(c=>({id:String(c.id),name:c.name})):[],shortDescription:String(p.short_description||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim()};
+  return {id:String(p.id),name:String(p.name||''),slug:String(p.slug||''),sku:String(p.sku||''),price:Number(p.price||0),regularPrice:Number(p.regular_price||0),salePrice:p.sale_price?Number(p.sale_price):null,onSale:Boolean(p.on_sale),stockStatus:String(p.stock_status||''),stockQuantity:p.stock_quantity==null?null:Number(p.stock_quantity),totalSales:Number(p.total_sales||0),image:p.images?.[0]?.src||null,imageAlt:String(p.images?.[0]?.alt||''),categories:Array.isArray(p.categories)?p.categories.map(c=>({id:String(c.id),name:c.name})):[],shortDescription:String(p.short_description||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim()};
 }
 
 function mapOrder(o){
