@@ -753,6 +753,29 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     }});
   }
 
+  const bundleDraftMatch=url.match(/^\/api\/v1\/marketing\/bundles\/([^/]+)\/([^/]+)\/bundle-action-draft$/);
+  if(method==='POST'&&bundleDraftMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const aId=bundleDraftMatch[1],bId=bundleDraftMatch[2],action=cleanOptional(body.action),aName=cleanLongText(body.aName,200),bName=cleanLongText(body.bName,200),reason=cleanLongText(body.reason,500);
+    const allowed=['bundle_candidate','test_bundle','review_bundle_margin','monitor'];
+    if(!allowed.includes(action)||!aName||!bName)return response(400,{error:'invalid_bundle_action'});
+    const key=[aId,bId].sort().join('|');
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.bundle_action_draft' AND entity_type='product_bundle' AND entity_id=$1 AND data->>'action'=$2 AND created_at>=now()-interval '30 days' LIMIT 1`,[key,action])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.bundle_action_draft','product_bundle',$2,$3::jsonb)`,[context.userId,key,JSON.stringify({aId,bId,aName,bName,action,reason,status:'draft',createdAt:new Date().toISOString()})]);
+    return response(201,{draft:{bundleKey:key,aId,bId,aName,bName,action,reason,status:'draft'}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/bundle-actions/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT al.id,al.entity_id AS bundle_key,al.data->>'aId' AS a_id,al.data->>'bId' AS b_id,al.data->>'aName' AS a_name,al.data->>'bName' AS b_name,al.data->>'action' AS action,al.created_at,
+      COALESCE((SELECT COUNT(DISTINCT o.id) FROM orders o JOIN order_items a ON a.order_id=o.id JOIN order_items b ON b.order_id=o.id AND b.product_id::text=al.data->>'bId' WHERE a.product_id::text=al.data->>'aId' AND o.paid_at>al.created_at),0)::integer AS orders_after,
+      COALESCE((SELECT SUM((a.subtotal_ex_vat-(a.quantity*a.unit_cost_snapshot))+(b.subtotal_ex_vat-(b.quantity*b.unit_cost_snapshot))) FROM orders o JOIN order_items a ON a.order_id=o.id JOIN order_items b ON b.order_id=o.id AND b.product_id::text=al.data->>'bId' WHERE a.product_id::text=al.data->>'aId' AND o.paid_at>al.created_at),0)::numeric(14,2) AS profit_after
+      FROM audit_log al WHERE al.action='ai.bundle_action_draft' ORDER BY al.created_at DESC LIMIT 100`)).rows;
+    return response(200,{items:rows,summary:{drafts:rows.length,withOrders:rows.filter(x=>Number(x.orders_after)>0).length,profitAfter:rows.reduce((s,x)=>s+Number(x.profit_after||0),0)}});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/bundle-profitability'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const rows=(await db.query(`WITH paid_items AS(
