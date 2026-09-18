@@ -395,6 +395,25 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
   if(method==='POST'&&url==='/api/v1/marketing/content'){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const title=cleanOptional(body.title),slug=cleanOptional(body.slug).toLowerCase(),contentType=cleanOptional(body.contentType),channel=cleanOptional(body.channel),contentBody=cleanOptional(body.body),primaryKeyword=cleanOptional(body.primaryKeyword),metaDescription=cleanOptional(body.metaDescription),scheduledAt=body.scheduledAt?parseDate(body.scheduledAt):null;if(title.length<3||title.length>200||!slug||slug.length>200||!/^[-a-z0-9\u0600-\u06ff]+$/.test(slug)||!['social','blog','email','landing_page'].includes(contentType)||!validContentChannel(channel,false)||contentBody.length>50000||primaryKeyword.length>120||metaDescription.length>200||(body.scheduledAt&&!scheduledAt))return response(400,{error:'invalid_marketing_content'});try{return response(201,{content:await createContent(db,{title,slug,contentType,channel,body:contentBody,primaryKeyword,metaDescription,scheduledAt,actorUserId:context.userId})});}catch(error){if(error.code==='23505')return response(409,{error:'content_slug_exists'});throw error;}}
   const contentTransitionMatch=url.match(/^\/api\/v1\/marketing\/content\/([^/]+)\/transition$/);if(method==='POST'&&contentTransitionMatch){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const to=cleanOptional(body.to),scheduledAt=body.scheduledAt?parseDate(body.scheduledAt):null;if(!validContentStatus(to,false)||(body.scheduledAt&&!scheduledAt))return response(400,{error:'invalid_content_transition'});try{const content=await transitionContent(db,{contentId:contentTransitionMatch[1],to,scheduledAt,actorUserId:context.userId});return content?response(200,{content}):response(404,{error:'marketing_content_not_found'});}catch(error){if(error.message.includes('Invalid content transition')||error.message.includes('Schedule time required'))return response(409,{error:'content_transition_conflict',message:error.message});throw error;}}
 
+  if(method==='GET'&&url==='/api/v1/marketing/content-attribution'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT
+      COALESCE(NULLIF(mt.content,''),'(بدون محتوى)') AS content,
+      mt.source,
+      mt.medium,
+      mt.campaign,
+      COUNT(DISTINCT oa.order_id)::integer AS orders,
+      COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue
+      FROM order_attribution oa
+      JOIN orders o ON o.id=oa.order_id
+      JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+      WHERE o.paid_at>=now()-interval '90 days'
+      GROUP BY mt.content,mt.source,mt.medium,mt.campaign
+      ORDER BY revenue DESC,orders DESC
+      LIMIT 50`)).rows;
+    return response(200,{attribution:rows});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/attribution'){if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});const range=parseDateRange(context.from,context.to);if(!range)return response(400,{error:'invalid_date_range'});return response(200,{...(await createRepositories(db).marketing.attribution(range.from,range.to)),range});}
   if(method==='POST'&&url==='/api/v1/marketing/touches'){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});const visitorId=cleanOptional(body.visitorId),customerId=cleanOptional(body.customerId),source=cleanOptional(body.source),medium=cleanOptional(body.medium),campaign=cleanOptional(body.campaign),content=cleanOptional(body.content),term=cleanOptional(body.term),landingUrl=cleanOptional(body.landingUrl),occurredAt=body.occurredAt?parseDate(body.occurredAt):new Date().toISOString();if((!visitorId&&!customerId)||!source||source.length>100||medium.length>100||campaign.length>200||content.length>200||term.length>200||landingUrl.length>2000||!occurredAt)return response(400,{error:'invalid_marketing_touch'});return response(201,{touch:await recordTouch(db,{visitorId,customerId,source,medium,campaign,content,term,landingUrl,occurredAt})});}
   if(method==='POST'&&url==='/api/v1/marketing/spend'){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const source=cleanOptional(body.source),campaign=cleanOptional(body.campaign),amount=Number(body.amount),spentOn=cleanOptional(body.spentOn),currency=(cleanOptional(body.currency)||'SAR').toUpperCase();if(!source||source.length>100||campaign.length>200||!validInventoryNumber(amount,true)||!/^\d{4}-\d{2}-\d{2}$/.test(spentOn)||currency.length!==3)return response(400,{error:'invalid_marketing_spend'});return response(201,{spend:await recordSpend(db,{source,campaign,amount,spentOn,currency,actorUserId:context.userId})});}
