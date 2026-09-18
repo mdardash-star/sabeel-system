@@ -161,7 +161,7 @@ function isPersistentRoute(method, pathname) {
       pathname === '/api/v1/technicians/stats' || pathname === '/api/v1/technicians' ||
       pathname === '/api/v1/settlements/stats' || pathname === '/api/v1/settlements' ||
       pathname === '/api/v1/reports/profitability' ||
-      ['/api/v1/marketing/stats','/api/v1/marketing/segments','/api/v1/marketing/campaigns','/api/v1/marketing/audience-preview','/api/v1/marketing/store/products','/api/v1/marketing/store/intelligence','/api/v1/marketing/store/orders','/api/v1/marketing/store/customers'].includes(pathname) ||
+      ['/api/v1/marketing/stats','/api/v1/marketing/segments','/api/v1/marketing/campaigns','/api/v1/marketing/audience-preview','/api/v1/marketing/channels/status','/api/v1/marketing/store/products','/api/v1/marketing/store/intelligence','/api/v1/marketing/store/orders','/api/v1/marketing/store/customers'].includes(pathname) ||
       ['/api/v1/marketing/abandoned-carts','/api/v1/marketing/abandoned-carts/stats'].includes(pathname) ||
       ['/api/v1/marketing/content','/api/v1/marketing/content/stats'].includes(pathname) ||
       pathname==='/api/v1/marketing/attribution' ||
