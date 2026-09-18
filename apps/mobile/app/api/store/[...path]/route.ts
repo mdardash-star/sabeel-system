@@ -42,6 +42,7 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
 
   const contentType=upstreamResponse.headers.get("content-type")||"application/json";
   const raw=await upstreamResponse.text();
+  if(path==="checkout"&&!upstreamResponse.ok){console.error(JSON.stringify({event:"subil.checkout_error",status:upstreamResponse.status,method:selectedPaymentMethod,body:raw.slice(0,2000)}));}
   let output=raw;
   let paymentTarget="";
   let mode="embedded";
