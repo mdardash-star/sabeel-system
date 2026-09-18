@@ -494,17 +494,31 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       SELECT c.id,c.name,
         COUNT(DISTINCT o.id)::integer AS orders,
         COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
-        MAX(o.paid_at) AS last_order_at
+        MAX(o.paid_at) AS last_order_at,
+        MIN(o.paid_at) AS first_order_at,
+        COALESCE(AVG(o.total_ex_vat),0)::numeric(14,2) AS aov,
+        (SELECT MIN(a.next_maintenance_at) FROM installed_assets a WHERE a.customer_id=c.id AND a.status='active') AS next_maintenance_at,
+        (SELECT COUNT(*)::integer FROM installed_assets a WHERE a.customer_id=c.id AND a.status='active') AS active_assets
       FROM customers c
       LEFT JOIN orders o ON o.customer_id=c.id AND o.paid_at IS NOT NULL
       GROUP BY c.id,c.name
     )
-    SELECT *,CASE
-      WHEN orders>=3 OR revenue>=3000 THEN 'VIP'
-      WHEN orders>=2 THEN 'repeat'
-      WHEN revenue>=2000 THEN 'high_value'
-      WHEN last_order_at<now()-interval '90 days' THEN 'dormant'
-      ELSE 'standard' END AS segment
+    SELECT *,
+      CASE
+        WHEN orders>=3 OR revenue>=3000 THEN 'VIP'
+        WHEN orders>=2 THEN 'repeat'
+        WHEN revenue>=2000 THEN 'high_value'
+        WHEN last_order_at<now()-interval '90 days' THEN 'dormant'
+        ELSE 'standard' END AS segment,
+      CASE
+        WHEN last_order_at IS NULL THEN 'unknown'
+        WHEN last_order_at<now()-interval '180 days' THEN 'high'
+        WHEN last_order_at<now()-interval '90 days' THEN 'medium'
+        ELSE 'low' END AS churn_risk,
+      CASE
+        WHEN orders=0 THEN 0
+        ELSE ROUND((revenue/orders)*GREATEST(orders,1)*CASE WHEN last_order_at>=now()-interval '90 days' THEN 1.35 WHEN last_order_at>=now()-interval '180 days' THEN 1.10 ELSE 0.80 END,2)
+      END AS estimated_ltv
     FROM base
     ORDER BY revenue DESC,last_order_at DESC NULLS LAST
     LIMIT 50`)).rows;
