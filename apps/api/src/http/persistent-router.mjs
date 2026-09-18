@@ -191,6 +191,12 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200, { ...report, range });
   }
 
+  if (method === 'GET' && url === '/api/v1/marketing/wordpress/status') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const publisher=createWordPressPublisher();
+    return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
+  }
+
   if (method === 'GET' && url === '/api/v1/marketing/channels/status') {
     if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
     const sender=createMarketingChannelSender();
