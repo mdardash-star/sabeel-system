@@ -24,7 +24,7 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
   const cartToken=request.cookies.get("subil_woo_cart_token")?.value;
   const nonce=request.cookies.get("subil_woo_nonce")?.value;
   if(cartToken)headers.set("Cart-Token",cartToken);
-  if(!cartToken&&nonce)headers.set("Nonce",nonce);
+  if(nonce)headers.set("Nonce",nonce);
   if(request.method!=="GET"&&request.method!=="HEAD")headers.set("content-type","application/json");
 
   const body=request.method==="GET"||request.method==="HEAD"?undefined:await request.text();
