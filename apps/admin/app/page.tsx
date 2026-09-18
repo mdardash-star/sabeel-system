@@ -90,7 +90,7 @@ export default function Dashboard() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <a className="nav-item" href="#"><Icon name="settings" /><span>الإعدادات</span></a>
+          <a className="nav-item" href="/portals"><Icon name="settings" /><span>مراكز التحكم والصلاحيات</span></a>
           <div className="support-card"><span>تحتاج مساعدة؟</span><strong>فريق الدعم معك</strong><button>تواصل معنا</button></div>
         </div>
       </aside>
