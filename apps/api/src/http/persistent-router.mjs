@@ -336,7 +336,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
 
   if(method==='GET'&&url==='/api/v1/marketing/executive-growth-priorities'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
-    const [attr,lowMargin,channelRisk,atRisk,bundle]=await Promise.all([
+    const [attr,lowMargin,channelRisk,atRisk,bundle,costCoverage]=await Promise.all([
       db.query(`SELECT COUNT(*)::integer AS total,COUNT(*) FILTER(WHERE oa.order_id IS NULL)::integer AS unattributed
         FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id WHERE o.external_source='woocommerce'`),
       db.query(`SELECT oi.product_id,oi.product_name,SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
@@ -370,22 +370,28 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
         SUM(a.subtotal_ex_vat+b.subtotal_ex_vat)::numeric(14,2) AS revenue
       FROM paid_items a JOIN paid_items b ON b.order_id=a.order_id AND b.product_id>a.product_id
       GROUP BY a.product_name,b.product_name HAVING COUNT(DISTINCT a.order_id)>=2
-      ORDER BY profit DESC LIMIT 1`)
+      ORDER BY profit DESC LIMIT 1`),
+      db.query(`SELECT COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue,
+        COALESCE(SUM(oi.subtotal_ex_vat) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)<=0),0)::numeric(14,2) AS affected_revenue
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id
+        WHERE o.paid_at>=now()-interval '90 days'`)
     ]);
     const priorities=[];
+    const cc=costCoverage.rows[0]||{},ccRevenue=Number(cc.revenue||0),ccAffected=Number(cc.affected_revenue||0),profitConfidence=ccRevenue?(1-ccAffected/ccRevenue):1;
+    const profitConfidenceLabel=profitConfidence>=0.9?'high':profitConfidence>=0.75?'medium':'low';
     const a=attr.rows[0]||{},total=Number(a.total||0),un=Number(a.unattributed||0),unRate=total?un/total*100:0;
     if(unRate>20)priorities.push({domain:'attribution',priority:'high',title:'رفع تغطية Attribution',reason:`${unRate.toFixed(1)}% من طلبات WooCommerce غير منسوبة.`,action:'شغّل Attribution Repair ثم حسّن UTM للمصادر الأعلى فقدًا.'});
     const lm=lowMargin.rows[0];
-    if(lm){const rev=Number(lm.revenue||0),p=Number(lm.profit||0),m=rev?p/rev*100:0;if(m<15)priorities.push({domain:'profit',priority:'high',title:'مراجعة منتج منخفض الهامش',reason:`${lm.product_name} بهامش ${m.toFixed(1)}%.`,action:'راجع التكلفة والسعر والعرض قبل زيادة الإعلان أو الخصم.'});}
+    if(lm){const rev=Number(lm.revenue||0),p=Number(lm.profit||0),m=rev?p/rev*100:0;if(m<15)priorities.push({domain:'profit',priority:'high',confidence:profitConfidenceLabel,title:'مراجعة منتج منخفض الهامش',reason:`${lm.product_name} بهامش ${m.toFixed(1)}%.`,action:profitConfidenceLabel==='low'?'استكمل Cost Repair أولًا ثم أعد تقييم السعر والعرض.':'راجع التكلفة والسعر والعرض قبل زيادة الإعلان أو الخصم.'});}
     const cr=channelRisk.rows[0];
-    if(cr&&Number(cr.spend||0)>0&&Number(cr.profit||0)<Number(cr.spend||0))priorities.push({domain:'channel',priority:'high',title:'مراجعة إنفاق قناة',reason:`${cr.source}: الربح ${Number(cr.profit||0).toFixed(0)} ر.س مقابل إنفاق ${Number(cr.spend||0).toFixed(0)} ر.س.`,action:'جمّد أي توسع إضافي وراجع الحملة والعرض والإسناد.'});
+    if(cr&&Number(cr.spend||0)>0&&Number(cr.profit||0)<Number(cr.spend||0))priorities.push({domain:'channel',priority:'high',confidence:profitConfidenceLabel,title:'مراجعة إنفاق قناة',reason:`${cr.source}: الربح ${Number(cr.profit||0).toFixed(0)} ر.س مقابل إنفاق ${Number(cr.spend||0).toFixed(0)} ر.س.`,action:profitConfidenceLabel==='low'?'استكمل Cost Repair قبل أي قرار إنفاق نهائي.':'جمّد أي توسع إضافي وراجع الحملة والعرض والإسناد.'});
     const ar=Number(atRisk.rows[0]?.total||0);
     if(ar>0)priorities.push({domain:'retention',priority:ar>=20?'high':'medium',title:'استرجاع العملاء المعرضين للفقد',reason:`${ar} عميلًا بلا طلب منذ أكثر من 90 يومًا.`,action:'جهّز Win-back Draft للعملاء ذوي القيمة الأعلى أولًا.'});
     const bu=bundle.rows[0];
-    if(bu){const rev=Number(bu.revenue||0),p=Number(bu.profit||0),m=rev?p/rev*100:0;if(m>=25)priorities.push({domain:'bundle',priority:'medium',title:'اختبار باقة عالية الهامش',reason:`${bu.a_name} + ${bu.b_name} تكررت ${bu.orders} مرات بهامش ${m.toFixed(1)}%.`,action:'أنشئ Bundle Draft واختبر عرضه دون خصم تلقائي.'});}
+    if(bu){const rev=Number(bu.revenue||0),p=Number(bu.profit||0),m=rev?p/rev*100:0;if(m>=25)priorities.push({domain:'bundle',priority:'medium',confidence:profitConfidenceLabel,title:'اختبار باقة عالية الهامش',reason:`${bu.a_name} + ${bu.b_name} تكررت ${bu.orders} مرات بهامش ${m.toFixed(1)}%.`,action:profitConfidenceLabel==='low'?'استكمل تكاليف المنتجات أولًا قبل اعتماد هامش الباقة.':'أنشئ Bundle Draft واختبر عرضه دون خصم تلقائي.'});}
     if(!priorities.length)priorities.push({domain:'monitoring',priority:'low',title:'استمرار المراقبة',reason:'لا توجد إشارة حرجة واضحة من البيانات الحالية.',action:'استمر في مراقبة الربحية وAttribution والRetention.'});
     const rank={high:0,medium:1,low:2};priorities.sort((x,y)=>rank[x.priority]-rank[y.priority]);
-    return response(200,{priorities:priorities.slice(0,5)});
+    return response(200,{priorities:priorities.slice(0,5),profitConfidence:{score:profitConfidence*100,label:profitConfidenceLabel,affectedRevenue:ccAffected,totalRevenue:ccRevenue}});
   }
 
   if(method==='GET'&&url==='/api/v1/marketing/attribution-repair/effectiveness'){
