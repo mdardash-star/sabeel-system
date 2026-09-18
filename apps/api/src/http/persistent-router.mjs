@@ -363,6 +363,23 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
   if(method==='POST'&&url==='/api/v1/marketing/abandoned-carts/recovery/run'){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const limit=Number(body.limit??100);if(!Number.isInteger(limit)||limit<1||limit>500)return response(400,{error:'invalid_recovery_limit'});return response(200,await runAbandonedCartRecovery(db,{actorUserId:context.userId,limit}));}
   const cartRecoveredMatch=url.match(/^\/api\/v1\/marketing\/abandoned-carts\/([^/]+)\/recovered$/);if(method==='POST'&&cartRecoveredMatch){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const cart=await markCartRecovered(db,{cartId:cartRecoveredMatch[1],orderId:cleanOptional(body.orderId),actorUserId:context.userId});return cart?response(200,{cart}):response(404,{error:'active_abandoned_cart_not_found'});}
 
+  if(method==='GET'&&url==='/api/v1/marketing/content/performance'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT mc.id,mc.title,mc.slug,mc.status,mc.seo_score,mc.published_at,
+      COUNT(DISTINCT mt.id)::integer AS touches,
+      COUNT(DISTINCT oa.order_id)::integer AS attributed_orders,
+      COALESCE(SUM(DISTINCT CASE WHEN oa.order_id IS NOT NULL THEN o.total_ex_vat ELSE 0 END),0)::numeric(14,2) AS attributed_revenue,
+      (SELECT al.data->>'link' FROM audit_log al WHERE al.entity_type='marketing_content' AND al.entity_id=mc.id::text AND al.action='marketing.content_published_wordpress' ORDER BY al.created_at DESC LIMIT 1) AS wordpress_url
+      FROM marketing_content mc
+      LEFT JOIN marketing_touches mt ON mt.content=mc.slug
+      LEFT JOIN order_attribution oa ON oa.first_touch_id=mt.id OR oa.last_touch_id=mt.id
+      LEFT JOIN orders o ON o.id=oa.order_id
+      GROUP BY mc.id
+      ORDER BY COALESCE(mc.published_at,mc.updated_at,mc.created_at) DESC
+      LIMIT 50`)).rows;
+    return response(200,{content:rows});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/content/stats'){if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});return response(200,{stats:await createRepositories(db).marketing.contentStats()});}
   if(method==='GET'&&url==='/api/v1/marketing/content'){if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});const pagination=parsePagination(context),status=context.status||'all',channel=context.channel||'all',from=context.from?parseDate(context.from):null,to=context.to?parseDate(context.to):null;if(!pagination)return response(400,{error:'invalid_pagination'});if(!validContentStatus(status)||!validContentChannel(channel)||(context.from&&!from)||(context.to&&!to)||(from&&to&&from>=to))return response(400,{error:'invalid_content_filter'});const rows=await createRepositories(db).marketing.content({...pagination,status,channel,from,to});return response(200,{content:rows.map(({total_count,...x})=>x),pagination:{...pagination,total:rows[0]?.total_count||0},status,channel});}
   if(method==='POST'&&url==='/api/v1/marketing/content'){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const title=cleanOptional(body.title),slug=cleanOptional(body.slug).toLowerCase(),contentType=cleanOptional(body.contentType),channel=cleanOptional(body.channel),contentBody=cleanOptional(body.body),primaryKeyword=cleanOptional(body.primaryKeyword),metaDescription=cleanOptional(body.metaDescription),scheduledAt=body.scheduledAt?parseDate(body.scheduledAt):null;if(title.length<3||title.length>200||!slug||slug.length>200||!/^[-a-z0-9\u0600-\u06ff]+$/.test(slug)||!['social','blog','email','landing_page'].includes(contentType)||!validContentChannel(channel,false)||contentBody.length>50000||primaryKeyword.length>120||metaDescription.length>200||(body.scheduledAt&&!scheduledAt))return response(400,{error:'invalid_marketing_content'});try{return response(201,{content:await createContent(db,{title,slug,contentType,channel,body:contentBody,primaryKeyword,metaDescription,scheduledAt,actorUserId:context.userId})});}catch(error){if(error.code==='23505')return response(409,{error:'content_slug_exists'});throw error;}}
