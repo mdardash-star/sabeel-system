@@ -200,6 +200,31 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/attribution-repair/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [single,bulk,recentNoUtm]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS attempts,
+        COUNT(*) FILTER(WHERE (data->>'repaired')::boolean IS TRUE)::integer AS repaired
+        FROM audit_log WHERE action='woocommerce.attribution_recheck'`),
+      db.query(`SELECT COUNT(*)::integer AS batches,
+        COALESCE(SUM((data->>'processed')::integer),0)::integer AS processed,
+        COALESCE(SUM((data->>'repaired')::integer),0)::integer AS repaired,
+        COALESCE(SUM((data->>'noUtm')::integer),0)::integer AS no_utm,
+        COALESCE(SUM((data->>'failed')::integer),0)::integer AS failed
+        FROM audit_log WHERE action='woocommerce.attribution_bulk_recheck'`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM audit_log
+        WHERE action='woocommerce.attribution_recheck'
+        AND (data->>'repaired')::boolean IS FALSE
+        AND created_at>=now()-interval '30 days'`)
+    ]);
+    const s=single.rows[0]||{},b=bulk.rows[0]||{};
+    const attempts=Number(s.attempts||0)+Number(b.processed||0),repaired=Number(s.repaired||0)+Number(b.repaired||0);
+    return response(200,{summary:{
+      attempts,repaired,noUtm:Number(b.no_utm||0)+Number(recentNoUtm.rows[0]?.total||0),
+      failed:Number(b.failed||0),successRate:attempts?repaired/attempts*100:0,batches:Number(b.batches||0)
+    }});
+  }
+
   if(method==='POST'&&url==='/api/v1/marketing/attribution-repair/bulk'){
     if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
     if(!context.userId)return response(401,{error:'user_identity_required'});
@@ -209,6 +234,11 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
     const queue=(await db.query(`SELECT o.id,o.external_order_id FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id
       WHERE o.external_source='woocommerce' AND oa.order_id IS NULL
+      AND NOT EXISTS(
+        SELECT 1 FROM audit_log al
+        WHERE al.action='woocommerce.attribution_recheck' AND al.entity_type='order' AND al.entity_id=o.id::text
+        AND (al.data->>'repaired')::boolean IS FALSE AND al.created_at>=now()-interval '30 days'
+      )
       ORDER BY o.total_ex_vat DESC NULLS LAST,o.paid_at ASC NULLS LAST LIMIT $1`,[limit])).rows;
     const summary={requested:limit,processed:0,repaired:0,noUtm:0,failed:0};
     for(const internal of queue){
