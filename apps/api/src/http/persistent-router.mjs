@@ -238,7 +238,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       const metaDescription=`تعرف على ${product.name}، أهم الاستخدامات والمميزات وما الذي يجب معرفته قبل الشراء من سبيل.`.slice(0,160);
       const productUrl=`${String(process.env.WOOCOMMERCE_BASE_URL||'https://subil.store').replace(/\/$/,'')}/product/${product.slug}/?utm_source=organic_content&utm_medium=article&utm_campaign=subil_cmo&utm_content=${encodeURIComponent(slug)}`;
       const bodyHtml=`<h2>${title}</h2><p>هذا الدليل يساعدك على فهم ${product.name} واستخدامه المناسب قبل اتخاذ قرار الشراء.</p><h3>ما هو المنتج؟</h3><p>${product.shortDescription||'منتج من متجر سبيل ضمن حلول المياه المنزلية.'}</p><h3>متى يكون مناسبًا؟</h3><p>يعتمد الاختيار على احتياج المنزل أو المنشأة، مصدر المياه، ونوع الاستخدام. يفضل مراجعة المواصفات ونطاق التركيب قبل الشراء.</p><h3>ما الذي يجب الانتباه له؟</h3><ul><li>التأكد من توافق المنتج مع موقع التركيب.</li><li>مراجعة متطلبات الصيانة وقطع الغيار.</li><li>اختيار المنتج بناءً على الاستخدام الفعلي وليس الاسم فقط.</li></ul><h3>منتجات وخدمات سبيل</h3><p><a href="${productUrl}">عرض ${product.name} في متجر سبيل</a> للحصول على السعر والمواصفات الحالية وخيارات الطلب.</p>`;
-      const item=await createContent(db,{title,slug,contentType:'article',channel:'website',body:bodyHtml,primaryKeyword:keyword,metaDescription,scheduledAt:null,actorUserId:context.userId});
+      const item=await createContent(db,{title,slug,contentType:'blog',channel:'website',body:bodyHtml,primaryKeyword:keyword,metaDescription,scheduledAt:null,actorUserId:context.userId});
       return response(201,{content:item,sourceProduct:product});
     }catch(error){return response(502,{error:'content_draft_creation_failed'});}
   }
@@ -379,7 +379,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const rows=(await db.query(`SELECT mc.id,mc.title,mc.slug,mc.status,mc.seo_score,mc.published_at,
       COUNT(DISTINCT mt.id)::integer AS touches,
       COUNT(DISTINCT oa.order_id)::integer AS attributed_orders,
-      COALESCE(SUM(DISTINCT CASE WHEN oa.order_id IS NOT NULL THEN o.total_ex_vat ELSE 0 END),0)::numeric(14,2) AS attributed_revenue,
+      COALESCE(COALESCE((SELECT SUM(x.total_ex_vat) FROM (SELECT DISTINCT o2.id,o2.total_ex_vat FROM order_attribution oa2 JOIN orders o2 ON o2.id=oa2.order_id JOIN marketing_touches mt2 ON mt2.id=oa2.last_touch_id WHERE mt2.content=mc.slug) x),0),0)::numeric(14,2) AS attributed_revenue,
       (SELECT al.data->>'link' FROM audit_log al WHERE al.entity_type='marketing_content' AND al.entity_id=mc.id::text AND al.action='marketing.content_published_wordpress' ORDER BY al.created_at DESC LIMIT 1) AS wordpress_url
       FROM marketing_content mc
       LEFT JOIN marketing_touches mt ON mt.content=mc.slug
