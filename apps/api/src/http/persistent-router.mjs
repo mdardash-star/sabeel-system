@@ -652,6 +652,51 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     }});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/channel-profitability'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const channels=(await db.query(`WITH order_profit AS(
+      SELECT o.id,o.total_ex_vat,
+        (o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS net_profit
+      FROM orders o
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity*unit_cost_snapshot),0) AS product_cost FROM order_items WHERE order_id=o.id)items ON true
+      LEFT JOIN order_costs oc ON oc.order_id=o.id
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(ts.payout_amount)FILTER(WHERE ts.status<>'rejected'),0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id=j.id WHERE j.order_id=o.id)pay ON true
+      WHERE o.paid_at>=now()-interval '90 days'
+    ), attributed AS(
+      SELECT op.id,op.total_ex_vat,op.net_profit,COALESCE(NULLIF(mt.source,''),'(direct)') AS source
+      FROM order_profit op
+      LEFT JOIN order_attribution oa ON oa.order_id=op.id
+      LEFT JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+    ), spend AS(
+      SELECT source,COALESCE(SUM(amount),0)::numeric(14,2) AS spend
+      FROM marketing_spend
+      WHERE spent_on>=current_date-interval '90 days'
+      GROUP BY source
+    )
+    SELECT a.source,
+      COUNT(DISTINCT a.id)::integer AS orders,
+      COALESCE(SUM(a.total_ex_vat),0)::numeric(14,2) AS revenue,
+      COALESCE(SUM(a.net_profit),0)::numeric(14,2) AS profit,
+      COALESCE(MAX(s.spend),0)::numeric(14,2) AS spend
+    FROM attributed a LEFT JOIN spend s ON s.source=a.source
+    GROUP BY a.source
+    ORDER BY profit DESC`)).rows.map(x=>{
+      const revenue=Number(x.revenue||0),profit=Number(x.profit||0),spend=Number(x.spend||0),margin=revenue?profit/revenue*100:0;
+      const roas=spend>0?revenue/spend:null,profitRoas=spend>0?profit/spend:null;
+      let status='healthy',note='القناة تحقق مساهمة ربحية مقبولة.';
+      if(revenue>0&&margin<15){status='low_margin';note='الإيراد موجود لكن هامش الربح منخفض.';}
+      if(spend>0&&profitRoas!=null&&profitRoas<1){status='unprofitable_spend';note='الربح المنسوب أقل من الإنفاق المسجل على القناة.';}
+      if(spend===0){status='no_spend_data';note='لا يوجد إنفاق مسجل؛ لا يمكن احتساب ROAS بدقة.';}
+      return{source:x.source,orders:Number(x.orders||0),revenue,profit,margin,spend,roas,profitRoas,status,note};
+    });
+    return response(200,{channels,summary:{
+      profitable:channels.filter(x=>x.profit>0).length,
+      lowMargin:channels.filter(x=>x.status==='low_margin').length,
+      unprofitableSpend:channels.filter(x=>x.status==='unprofitable_spend').length,
+      missingSpend:channels.filter(x=>x.status==='no_spend_data').length
+    }});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/profit-intelligence'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const summary=(await db.query(`SELECT
