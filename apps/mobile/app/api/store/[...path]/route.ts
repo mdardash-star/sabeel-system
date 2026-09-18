@@ -72,7 +72,8 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
   const nextNonce=upstreamResponse.headers.get("Nonce");
   const cookieOptions={httpOnly:true,secure:true,sameSite:"lax" as const,path:"/",maxAge:60*60*24*7};
   if(nextToken)response.cookies.set("subil_woo_cart_token",nextToken,cookieOptions);
-  if(path==="cart"&&request.method==="GET"&&!cartToken&&nextToken){console.info(JSON.stringify({event:"subil.cart_session_created"}));}\n  if(path==="cart/add-item"){console.info(JSON.stringify({event:"subil.cart_item_added",status:upstreamResponse.status,hadCartToken:Boolean(cartToken),receivedCartToken:Boolean(nextToken)}));}
+  if(path==="cart"&&request.method==="GET"&&!cartToken&&nextToken){console.info(JSON.stringify({event:"subil.cart_session_created"}));}
+  if(path==="cart/add-item"){console.info(JSON.stringify({event:"subil.cart_item_added",status:upstreamResponse.status,hadCartToken:Boolean(cartToken),receivedCartToken:Boolean(nextToken)}));}
   if(nextNonce)response.cookies.set("subil_woo_nonce",nextNonce,cookieOptions);
   if(paymentTarget){
     response.cookies.set("subil_payment_target",paymentTarget,{httpOnly:true,secure:true,sameSite:"lax",path:"/",maxAge:60*20});
