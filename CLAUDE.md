@@ -48,16 +48,39 @@ message="Api error, please try again later."
 - إعادة حفظ SKU للباقات الست عبر WooCommerce REST
 - فحص purchasable/in stock
 - تعديل `Product::get_sku()` عبر Angie snippet #9048 (نسختين) — لم يحل 409
+- **(جديد 2026-09-18) إعادة تشغيل مسار GET cart → add-item → update-customer → select-shipping-rate → checkout عبر استدعاء مباشر ونظيف لـ Store API (بدون كود العميل)، لكل من COD وAmwal — لم يُعِد 409 في أي منهما. راجع سجل التشخيص أدناه قبل إعادة هذه الخطوة.**
 
-**خطة العمل الموصى بها:**
-1. اختبر COD أولًا بنفس السلة → إذا أعاد 409 أيضًا، فبوابات الدفع بريئة تمامًا.
-2. التقط stack trace / hook trace عند `Store API checkout` / `check_cart_items` بدل الاعتماد على رسالة REST فقط.
-3. ابحث عن مصدر رمي `'Api error, please try again later.'` أو `WP_Error` أثناء cart validation.
-4. اعزل الإضافات المتداخلة مع Cart/Checkout على staging (خصوصًا SUBIL Commerce، وإضافات cart/product-options/direct-checkout/side-cart والبوابات غير المستخدمة). استخدم Health Check troubleshooting mode.
-5. لا تعطّل إضافات على Production بلا خطة rollback.
-6. إن أمكن: staging clone من subil.store مع WooCommerce + بوابة واحدة + Astra فقط، ثم أعد الإضافات تدريجيًا.
-7. بعد نجاح COD: اختبر Amwal → Tap → Tamara → Tabby → Amwal installments، بالترتيب.
-8. أضف E2E test آلي لمسار: GET cart → add-item → update-customer → shipping → checkout COD.
+**سجل تشخيص 2026-09-18 — استدعاء مباشر لـ Store API (خارج كود العميل):**
+تم تشغيل سكربت Python يكرر تمامًا التسلسل الموصى به في نقطة 8 (GET cart → add-item ×2 → update-customer → select-shipping-rate → checkout) ضد `https://subil.store/wp-json/wc/store/v1/*` مباشرة، بسلة تحوي منتجين من الباقات الست (8955, 8946)، وعنوان شحن/فوترة كامل يتضمن الهاتف.
+
+النتائج:
+- **COD:** نجح بالكامل، 200 OK، أُنشئ طلب حقيقي **#9050** (status: processing).
+- **Amwal (`amwalcheckout`):** نجح أيضًا عبر Store API، 200 OK، أُنشئ طلب حقيقي **#9052** (status: pending) — **لم يظهر 409 هنا أيضًا**.
+  - ⚠️ ملاحظة جانبية مهمة: `redirect_url` المُعاد من `payment_result` أشار إلى صفحة WooCommerce الداخلية `checkout/order-pay/9052/...` **وليس** صفحة الدفع المستضافة الخاصة بـ Amwal. أي أن بوابة Amwal قد لا تُنفّذ `process_payment` بشكل يوجّه فعليًا لصفحتها المستضافة عند الاستدعاء المباشر لـ Store API. يستحق تتبعًا منفصلًا عن الـ 409 (قد يفسر لاحقًا لماذا الواجهة "تفتح Hosted Checkout مباشرة" كما هو موصوف أعلاه — تأكد من أن العميل لا يعتمد فقط على `redirect_url` من هذا الاستدعاء دون معالجة إضافية).
+  - ⚠️ **الطلبان #9050 و#9052 حقيقيان في الإنتاج ولم يُلغَيا بعد.** لا توجد وسيلة لإلغائهما عبر Store API العام أو صفحة `order-pay` (لا رابط "إلغاء الطلب" ظاهر لعميل غير مسجل، وحالة #9050 "processing" لا تسمح بالإلغاء الذاتي أصلًا). الإلغاء يتطلب إما مفاتيح WooCommerce REST API (Consumer Key/Secret كـ Render secret — لا تُكتب بالمحادثة) أو دخول wp-admin مباشرة. **إجراء مطلوب: ألغِهما يدويًا من WooCommerce → Orders.**
+- **خلل حقيقي مؤكد (100% قابل للتكرار):** استجابة `POST /cart/add-item` ليست JSON صالحًا رغم `Content-Type: application/json` — تحتوي على سكربت خام مُطبوع قبل جسم الـ JSON مباشرة:
+  ```
+  <!-- ADD_CART Snap Pixel Event -->
+  <script>...snaptr('track', 'ADD_CART', {...});</script>
+  <!-- /ADD_CART Snap Pixel Event -->
+  {"items":[...]}
+  ```
+  يتكرر في كل استدعاء `add-item` (تأكد بمنتجين مختلفين، مرتين). أي عميل يستخدم `response.json()` بشكل صارم (متوقع في `apps/mobile/app/api/store/[...path]/route.ts`) سيفشل بتحليل هذه الاستجابة تحديدًا. **هذا أقوى مرشّح جديد لمصدر خطأ "Api error, please try again later."** — ابحث عن مصدر حقن Snap Pixel (على الأرجح WPCode snippet أو SUBIL Commerce) وتأكد إن كان يحقن أيضًا في استجابة `checkout` أو `update-customer` (لم يظهر في اختبار اليوم، لكن لم يُختبر بشكل شامل).
+- **خلاصة:** بما أن الاستدعاء المباشر النظيف (nonce وcart-token صحيحين، عنوان كامل بالهاتف) لا يُعيد 409 لا في COD ولا Amwal، فالمشكلة على الأرجح **ليست في WooCommerce/Store API نفسه** بل في كيفية تعامل **كود العميل** مع الاستجابات (خصوصًا حقن Snap Pixel المكسِّر لـ JSON) أو في حالة السباق (race condition) بين cart-token/nonce عبر الطلبات المتتالية في الواجهة الفعلية.
+- **⛔ محظور تشخيصي حالي:** ملف `apps/mobile/app/api/store/[...path]/route.ts` وبقية كود `apps/mobile` **غير موجودين في هذا المستودع** (`mdardash-star/sabeel-system` يحوي حاليًا فقط `CLAUDE.md`, `README.md1`, ملف docx قديم). لا يمكن متابعة التشخيص من جهة كود العميل دون أحد الأمرين:
+  1. الوصول لموقع الكود الفعلي لـ `apps/mobile` (مستودع/فرع آخر لم يُدفع هنا)، أو
+  2. التقاط طلب فاشل حقيقي (409) من DevTools Network في متصفح حقيقي أو من لوج Render، لمقارنته header-by-header مع الاستدعاء النظيف الناجح أعلاه.
+
+**خطة العمل الموصى بها (محدّثة):**
+1. ~~اختبر COD أولًا بنفس السلة~~ **تم** — نجح COD وAmwal معًا عبر استدعاء مباشر، لم يتكرر 409. بوابات الدفع وWooCommerce الأساسي بريئان في هذا الاختبار.
+2. أوجد مصدر حقن Snap Pixel في استجابة `add-item` (أولوية عالية جديدة) — افحص WPCode snippets وSUBIL Commerce بحثًا عن أي `echo`/`print` مباشر داخل hook مرتبط بـ `woocommerce_store_api_cart_item_added` أو مشابه.
+3. احصل على كود `apps/mobile/app/api/store/[...path]/route.ts` الفعلي وراجع كيف يتعامل مع استجابة `add-item` غير الصالحة كـ JSON، وكيف يمرر Cart-Token/Nonce بين الطلبات.
+4. التقط طلب 409 حقيقي فعلي (DevTools أو لوج Render) وقارنه بالاستدعاء الناجح الموثّق أعلاه.
+5. التقط stack trace / hook trace عند `Store API checkout` / `check_cart_items` إن تكرر 409 من جهة السيرفر فعلاً (لم يتكرر في اختبار اليوم).
+6. تتبّع خلل Amwal `redirect_url` (يشير لصفحة WooCommerce الداخلية بدل صفحة Amwal المستضافة) بشكل منفصل عن الـ 409.
+7. اعزل الإضافات المتداخلة مع Cart/Checkout على staging فقط إذا استمر 409 بعد استبعاد كود العميل (خصوصًا SUBIL Commerce، وإضافات cart/product-options/direct-checkout/side-cart والبوابات غير المستخدمة). استخدم Health Check troubleshooting mode.
+8. لا تعطّل إضافات على Production بلا خطة rollback.
+9. سكربت الاستدعاء المباشر (GET cart → add-item → update-customer → select-shipping-rate → checkout) صالح الآن كأساس لـ E2E test آلي — وسّعه ليغطي بقية البوابات بعد حل نقطة 2 و3.
 
 **بيئة WordPress وقت التشخيص:** WooCommerce 11.1.0، SUBIL Commerce 13.0.0-dev (مشتبه به)، Tabby Checkout 5.9.2 (لم يُحدَّث أثناء التشخيص لتجنب متغير جديد)، Tamara/Tap/Amwal Checkout موجودة. WPCode Lite 2.3.9 مفعل. المسار الناجح لنشر التعديلات: Angie (create/update/validate/publish snippets).
 
