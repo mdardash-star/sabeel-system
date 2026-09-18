@@ -3,12 +3,16 @@ function normalizeBase(url){return String(url||'').trim().replace(/\/$/,'');}
 export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_BASE_URL,consumerKey=process.env.WOOCOMMERCE_CONSUMER_KEY,consumerSecret=process.env.WOOCOMMERCE_CONSUMER_SECRET,fetchImpl=globalThis.fetch}={}){
   const base=normalizeBase(baseUrl);
   const configured=Boolean(base&&consumerKey&&consumerSecret&&typeof fetchImpl==='function');
-  async function request(path){
+  async function request(path,{method='GET',body}={}){
     if(!configured)throw new Error('WooCommerce catalog unavailable');
     const url=new URL(`${base}/wp-json/wc/v3${path}`);
     url.searchParams.set('consumer_key',consumerKey);
     url.searchParams.set('consumer_secret',consumerSecret);
-    const response=await fetchImpl(url,{headers:{accept:'application/json'}});
+    const response=await fetchImpl(url,{
+      method,
+      headers:{accept:'application/json',...(body?{'content-type':'application/json'}:{})},
+      ...(body?{body:JSON.stringify(body)}:{})
+    });
     if(!response.ok)throw new Error(`WooCommerce catalog request failed: ${response.status}`);
     return response.json();
   }
@@ -22,6 +26,14 @@ export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_
       return rows.map(mapProduct);
     },
     async getProduct(id){return mapProduct(await request(`/products/${encodeURIComponent(id)}`));},
+    async updateProduct(id,patch={}){
+      const safe={};
+      if(typeof patch.name==='string'&&patch.name.trim())safe.name=patch.name.trim().slice(0,180);
+      if(typeof patch.shortDescription==='string')safe.short_description=patch.shortDescription.slice(0,5000);
+      if(typeof patch.description==='string')safe.description=patch.description.slice(0,30000);
+      if(!Object.keys(safe).length)throw new Error('No safe product fields supplied');
+      return mapProduct(await request(`/products/${encodeURIComponent(id)}`,{method:'PUT',body:safe}));
+    },
     async listCategories(){const rows=await request('/products/categories?hide_empty=true&per_page=100');return rows.map(x=>({id:String(x.id),name:x.name,count:Number(x.count||0)}));}
   };
 }
