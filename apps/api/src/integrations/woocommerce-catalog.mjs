@@ -59,16 +59,22 @@ export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_
       const byCustomer=new Map();
       for(const o of paid){
         const key=o.customerId||o.email||o.phone||`guest-${o.id}`;
-        byCustomer.set(key,(byCustomer.get(key)||0)+1);
+        const row=byCustomer.get(key)||{orders:0,revenue:0,lastOrderAt:null,name:o.name,email:o.email,phone:o.phone,customerId:o.customerId};
+        row.orders+=1; row.revenue+=o.total; row.lastOrderAt=o.createdAt||row.lastOrderAt; byCustomer.set(key,row);
       }
-      const repeatCustomers=[...byCustomer.values()].filter(n=>n>=2).length;
+      const customerRows=[...byCustomer.values()];
+      const repeatCustomers=customerRows.filter(x=>x.orders>=2).length;
+      const highValueCustomers=customerRows.filter(x=>x.revenue>=2000).length;
+      const vipCustomers=customerRows.filter(x=>x.orders>=3||x.revenue>=3000).length;
       const recentCutoff=Date.now()-90*86400000;
-      const dormant=customers.filter(x=>x.lastOrderAt&&new Date(x.lastOrderAt).getTime()<recentCutoff).length;
+      const dormantRows=customerRows.filter(x=>x.lastOrderAt&&new Date(x.lastOrderAt).getTime()<recentCutoff);
+      const atRiskRows=customerRows.filter(x=>x.orders>=2&&x.lastOrderAt&&new Date(x.lastOrderAt).getTime()<recentCutoff);
+      const topCustomers=[...customerRows].sort((a,b)=>b.revenue-a.revenue).slice(0,10);
       const topProducts=[...products].sort((a,b)=>(b.totalSales||0)-(a.totalSales||0)).slice(0,8);
       return {
         snapshotAt:new Date().toISOString(),
         orders:{sample:orders.length,paid:paid.length,revenue,aov},
-        customers:{sample:customers.length,repeatCustomers,dormant90d:dormant},
+        customers:{sample:customers.length,repeatCustomers,highValueCustomers,vipCustomers,dormant90d:dormantRows.length,atRisk:atRiskRows.length,topCustomers},
         products:{sample:products.length,topProducts}
       };
     }
