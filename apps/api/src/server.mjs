@@ -202,6 +202,7 @@ function isPersistentRoute(method, pathname) {
       pathname==='/api/v1/ai/marketing/scan' ||
       pathname==='/api/v1/ai/finance/scan' ||
       pathname==='/api/v1/marketing/alerts/run' ||
+      pathname==='/api/v1/marketing/store/backfill-orders' ||
       /^\/api\/v1\/marketing\/customers\/[^/]+\/next-best-action-draft$/.test(pathname) ||
       /^\/api\/v1\/marketing\/customers\/[^/]+\/retention-journey-draft$/.test(pathname) ||
       /^\/api\/v1\/marketing\/products\/[^/]+\/profit-action-draft$/.test(pathname) ||
