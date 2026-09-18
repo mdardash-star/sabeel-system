@@ -488,6 +488,33 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{items:rows,summary:{drafts:rows.length,converted:rows.filter(x=>x.converted).length}});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/retention-journeys'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`WITH base AS(
+      SELECT c.id,c.name,
+        COUNT(DISTINCT o.id)::integer AS orders,
+        COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
+        MAX(o.paid_at) AS last_order_at,
+        (SELECT MIN(a.next_maintenance_at) FROM installed_assets a WHERE a.customer_id=c.id AND a.status='active') AS next_maintenance_at
+      FROM customers c
+      LEFT JOIN orders o ON o.customer_id=c.id AND o.paid_at IS NOT NULL
+      GROUP BY c.id,c.name
+    )
+    SELECT * FROM base ORDER BY revenue DESC,last_order_at DESC NULLS LAST LIMIT 100`)).rows;
+    const journeys=rows.map(x=>{
+      const daysToMaintenance=x.next_maintenance_at?Math.ceil((new Date(x.next_maintenance_at).getTime()-Date.now())/86400000):null;
+      let journey='nurture',priority='low',reason='لا توجد إشارة أقوى حاليًا';
+      if(daysToMaintenance!=null&&daysToMaintenance<=30){journey='maintenance_due';priority=daysToMaintenance<0?'high':'medium';reason=daysToMaintenance<0?'الصيانة متأخرة':'الصيانة مستحقة خلال 30 يومًا';}
+      else if(x.last_order_at&&new Date(x.last_order_at).getTime()<Date.now()-180*86400000){journey='winback';priority='high';reason='لا يوجد طلب منذ أكثر من 180 يومًا';}
+      else if(x.last_order_at&&new Date(x.last_order_at).getTime()<Date.now()-90*86400000){journey='winback';priority='medium';reason='لا يوجد طلب منذ أكثر من 90 يومًا';}
+      else if(Number(x.orders)>=3||Number(x.revenue)>=3000){journey='vip_loyalty';priority='medium';reason='عميل مرتفع القيمة أو متكرر';}
+      else if(Number(x.orders)>=2){journey='repeat_growth';priority='medium';reason='عميل متكرر قابل للـCross-sell والولاء';}
+      return{customerId:String(x.id),name:x.name,orders:Number(x.orders||0),revenue:Number(x.revenue||0),lastOrderAt:x.last_order_at,nextMaintenanceAt:x.next_maintenance_at,journey,priority,reason};
+    });
+    const summary=journeys.reduce((a,x)=>{a[x.journey]=(a[x.journey]||0)+1;return a;},{});
+    return response(200,{journeys,summary});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/customer-360'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const customers=(await db.query(`WITH base AS(
