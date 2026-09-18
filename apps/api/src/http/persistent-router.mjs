@@ -231,6 +231,16 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       return response(200,{connected:true,products});
     }catch(error){return response(502,{error:'woocommerce_unavailable'});}
   }
+  const marketingStoreSeoMatch=url.match(/^\/api\/v1\/marketing\/store\/products\/([^/]+)\/seo\/apply$/);
+  if (method === 'POST' && marketingStoreSeoMatch) {
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const result=await woo.applySafeSeoPatch(marketingStoreSeoMatch[1]);
+      return response(200,result);
+    }catch(error){return response(502,{error:'woocommerce_seo_apply_failed'});}
+  }
   const marketingStoreProductMatch=url.match(/^\/api\/v1\/marketing\/store\/products\/([^/]+)$/);
   if (method === 'PATCH' && marketingStoreProductMatch) {
     if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
