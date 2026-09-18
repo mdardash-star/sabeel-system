@@ -16,6 +16,7 @@ import { createDispatchRecommendation, reviewDispatchRecommendation } from '../a
 import { scanSalesOpportunities, updateSalesOpportunity } from '../ai/sales.mjs';
 import { scanMarketingRecommendations, updateMarketingRecommendation } from '../ai/marketing.mjs';
 import { scanFinanceAnomalies, updateFinanceAnomaly } from '../ai/finance.mjs';
+import { scanMarketingAlerts } from '../ai/marketing-alerts.mjs';
 import { rateCustomerJob } from '../crm/customer-portal.mjs';
 import { createWooCommerceCatalogClient } from '../integrations/woocommerce-catalog.mjs';
 import { createMarketingChannelSender } from '../integrations/marketing-channel-sender.mjs';
@@ -433,6 +434,12 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     };
     const headline=summary.revenue>0?`حقق المتجر ${summary.revenue.toFixed(0)} ر.س من ${summary.orders} طلبًا خلال آخر 90 يومًا بمتوسط ${summary.aov.toFixed(0)} ر.س للطلب.`:'لا توجد مبيعات مدفوعة كافية في بيانات سبيل خلال آخر 90 يومًا.';
     return response(200,{generatedAt:new Date().toISOString(),headline,summary,actions:actions.slice(0,3)});
+  }
+
+  if(method==='POST'&&url==='/api/v1/marketing/alerts/run'){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    return response(200,await scanMarketingAlerts(db,{actorUserId:context.userId,organizationId:context.tenantId||undefined}));
   }
 
   if(method==='GET'&&url==='/api/v1/marketing/revenue-intelligence'){
