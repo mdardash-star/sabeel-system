@@ -200,6 +200,60 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/executive-growth-priorities'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [attr,lowMargin,channelRisk,atRisk,bundle]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS total,COUNT(*) FILTER(WHERE oa.order_id IS NULL)::integer AS unattributed
+        FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id WHERE o.external_source='woocommerce'`),
+      db.query(`SELECT oi.product_id,oi.product_name,SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
+        SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot))::numeric(14,2) AS profit
+        FROM order_items oi JOIN orders o ON o.id=oi.order_id
+        WHERE o.paid_at>=now()-interval '90 days'
+        GROUP BY oi.product_id,oi.product_name
+        HAVING SUM(oi.subtotal_ex_vat)>0
+        ORDER BY (SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot))/NULLIF(SUM(oi.subtotal_ex_vat),0)) ASC LIMIT 1`),
+      db.query(`WITH order_profit AS(
+        SELECT o.id,(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS net_profit
+        FROM orders o
+        LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity*unit_cost_snapshot),0) AS product_cost FROM order_items WHERE order_id=o.id)items ON true
+        LEFT JOIN order_costs oc ON oc.order_id=o.id
+        LEFT JOIN LATERAL(SELECT COALESCE(SUM(ts.payout_amount)FILTER(WHERE ts.status<>'rejected'),0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id=j.id WHERE j.order_id=o.id)pay ON true
+        WHERE o.paid_at>=now()-interval '90 days'
+      )
+      SELECT COALESCE(NULLIF(mt.source,''),'(direct)') AS source,COALESCE(SUM(op.net_profit),0)::numeric(14,2) AS profit,
+        COALESCE((SELECT SUM(ms.amount) FROM marketing_spend ms WHERE ms.source=COALESCE(NULLIF(mt.source,''),'(direct)') AND ms.spent_on>=current_date-interval '90 days'),0)::numeric(14,2) AS spend
+      FROM order_profit op LEFT JOIN order_attribution oa ON oa.order_id=op.id LEFT JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+      GROUP BY 1 ORDER BY (COALESCE(SUM(op.net_profit),0)-COALESCE((SELECT SUM(ms.amount) FROM marketing_spend ms WHERE ms.source=COALESCE(NULLIF(mt.source,''),'(direct)') AND ms.spent_on>=current_date-interval '90 days'),0)) ASC LIMIT 1`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM(
+        SELECT c.id,MAX(o.paid_at) AS last_order FROM customers c LEFT JOIN orders o ON o.customer_id=c.id GROUP BY c.id
+      )x WHERE x.last_order IS NOT NULL AND x.last_order<now()-interval '90 days'`),
+      db.query(`WITH paid_items AS(
+        SELECT o.id AS order_id,oi.product_id,oi.product_name,oi.subtotal_ex_vat,(oi.quantity*oi.unit_cost_snapshot)::numeric(14,2) AS cost
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE o.paid_at>=now()-interval '90 days'
+      )
+      SELECT a.product_name AS a_name,b.product_name AS b_name,COUNT(DISTINCT a.order_id)::integer AS orders,
+        SUM((a.subtotal_ex_vat-a.cost)+(b.subtotal_ex_vat-b.cost))::numeric(14,2) AS profit,
+        SUM(a.subtotal_ex_vat+b.subtotal_ex_vat)::numeric(14,2) AS revenue
+      FROM paid_items a JOIN paid_items b ON b.order_id=a.order_id AND b.product_id>a.product_id
+      GROUP BY a.product_name,b.product_name HAVING COUNT(DISTINCT a.order_id)>=2
+      ORDER BY profit DESC LIMIT 1`)
+    ]);
+    const priorities=[];
+    const a=attr.rows[0]||{},total=Number(a.total||0),un=Number(a.unattributed||0),unRate=total?un/total*100:0;
+    if(unRate>20)priorities.push({domain:'attribution',priority:'high',title:'رفع تغطية Attribution',reason:`${unRate.toFixed(1)}% من طلبات WooCommerce غير منسوبة.`,action:'شغّل Attribution Repair ثم حسّن UTM للمصادر الأعلى فقدًا.'});
+    const lm=lowMargin.rows[0];
+    if(lm){const rev=Number(lm.revenue||0),p=Number(lm.profit||0),m=rev?p/rev*100:0;if(m<15)priorities.push({domain:'profit',priority:'high',title:'مراجعة منتج منخفض الهامش',reason:`${lm.product_name} بهامش ${m.toFixed(1)}%.`,action:'راجع التكلفة والسعر والعرض قبل زيادة الإعلان أو الخصم.'});}
+    const cr=channelRisk.rows[0];
+    if(cr&&Number(cr.spend||0)>0&&Number(cr.profit||0)<Number(cr.spend||0))priorities.push({domain:'channel',priority:'high',title:'مراجعة إنفاق قناة',reason:`${cr.source}: الربح ${Number(cr.profit||0).toFixed(0)} ر.س مقابل إنفاق ${Number(cr.spend||0).toFixed(0)} ر.س.`,action:'جمّد أي توسع إضافي وراجع الحملة والعرض والإسناد.'});
+    const ar=Number(atRisk.rows[0]?.total||0);
+    if(ar>0)priorities.push({domain:'retention',priority:ar>=20?'high':'medium',title:'استرجاع العملاء المعرضين للفقد',reason:`${ar} عميلًا بلا طلب منذ أكثر من 90 يومًا.`,action:'جهّز Win-back Draft للعملاء ذوي القيمة الأعلى أولًا.'});
+    const bu=bundle.rows[0];
+    if(bu){const rev=Number(bu.revenue||0),p=Number(bu.profit||0),m=rev?p/rev*100:0;if(m>=25)priorities.push({domain:'bundle',priority:'medium',title:'اختبار باقة عالية الهامش',reason:`${bu.a_name} + ${bu.b_name} تكررت ${bu.orders} مرات بهامش ${m.toFixed(1)}%.`,action:'أنشئ Bundle Draft واختبر عرضه دون خصم تلقائي.'});}
+    if(!priorities.length)priorities.push({domain:'monitoring',priority:'low',title:'استمرار المراقبة',reason:'لا توجد إشارة حرجة واضحة من البيانات الحالية.',action:'استمر في مراقبة الربحية وAttribution والRetention.'});
+    const rank={high:0,medium:1,low:2};priorities.sort((x,y)=>rank[x.priority]-rank[y.priority]);
+    return response(200,{priorities:priorities.slice(0,5)});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/attribution-repair/effectiveness'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const [single,bulk,recentNoUtm]=await Promise.all([
