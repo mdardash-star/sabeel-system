@@ -753,6 +753,39 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     }});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/bundle-profitability'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`WITH paid_items AS(
+      SELECT o.id AS order_id,o.total_ex_vat,oi.product_id,oi.product_name,oi.subtotal_ex_vat,
+        (oi.quantity*oi.unit_cost_snapshot)::numeric(14,2) AS product_cost
+      FROM orders o JOIN order_items oi ON oi.order_id=o.id
+      WHERE o.paid_at>=now()-interval '90 days'
+    ), pairs AS(
+      SELECT a.product_id AS a_id,a.product_name AS a_name,b.product_id AS b_id,b.product_name AS b_name,
+        COUNT(DISTINCT a.order_id)::integer AS orders,
+        SUM(a.subtotal_ex_vat+b.subtotal_ex_vat)::numeric(14,2) AS pair_revenue,
+        SUM((a.subtotal_ex_vat-a.product_cost)+(b.subtotal_ex_vat-b.product_cost))::numeric(14,2) AS pair_profit,
+        AVG(o.total_ex_vat)::numeric(14,2) AS avg_order
+      FROM paid_items a
+      JOIN paid_items b ON b.order_id=a.order_id AND b.product_id>a.product_id
+      JOIN orders o ON o.id=a.order_id
+      GROUP BY a.product_id,a.product_name,b.product_id,b.product_name
+    )
+    SELECT * FROM pairs ORDER BY orders DESC,pair_profit DESC LIMIT 30`)).rows.map(x=>{
+      const revenue=Number(x.pair_revenue||0),profit=Number(x.pair_profit||0),margin=revenue?profit/revenue*100:0;
+      let action='monitor',priority='low',reason='التركيبة تحتاج بيانات أكثر قبل تحويلها لباقـة.';
+      if(Number(x.orders)>=2&&margin>=30){action='bundle_candidate';priority='high';reason='التركيبة تتكرر بهامش قوي؛ مناسبة كباقة أو Cross-sell بارز.';}
+      else if(Number(x.orders)>=2&&margin<15){action='review_bundle_margin';priority='high';reason='التركيبة تتكرر لكن هامشها منخفض؛ راجع التسعير والتكلفة قبل الترويج.';}
+      else if(Number(x.orders)>=2&&margin>=20){action='test_bundle';priority='medium';reason='التركيبة واعدة وتستحق اختبار باقة دون خصم تلقائي.';}
+      return{...x,orders:Number(x.orders||0),pairRevenue:revenue,pairProfit:profit,margin,avgOrder:Number(x.avg_order||0),action,priority,reason};
+    });
+    return response(200,{bundles:rows,summary:{
+      candidates:rows.filter(x=>x.action==='bundle_candidate').length,
+      tests:rows.filter(x=>x.action==='test_bundle').length,
+      lowMargin:rows.filter(x=>x.action==='review_bundle_margin').length
+    }});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/profit-intelligence'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const summary=(await db.query(`SELECT
