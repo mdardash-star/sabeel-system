@@ -200,6 +200,26 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/growth-priority-drafts'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT id,entity_id AS priority_key,data,created_at
+      FROM audit_log WHERE action='ai.growth_priority_draft' ORDER BY created_at DESC LIMIT 100`)).rows;
+    return response(200,{drafts:rows,summary:{total:rows.length}});
+  }
+
+  if(method==='POST'&&url==='/api/v1/marketing/growth-priority-drafts'){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const domain=cleanOptional(body.domain),title=cleanLongText(body.title,180),priority=cleanOptional(body.priority),reason=cleanLongText(body.reason,500),actionText=cleanLongText(body.action,500);
+    if(!domain||!title||!['high','medium','low'].includes(priority))return response(400,{error:'invalid_growth_priority'});
+    const key=(domain+'|'+title).toLowerCase().replace(/\s+/g,'_').slice(0,240);
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.growth_priority_draft' AND entity_type='growth_priority' AND entity_id=$1 AND created_at>=now()-interval '30 days' LIMIT 1`,[key])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    const data={domain,title,priority,reason,action:actionText,status:'draft',createdAt:new Date().toISOString()};
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.growth_priority_draft','growth_priority',$2,$3::jsonb)`,[context.userId,key,JSON.stringify(data)]);
+    return response(201,{draft:{key,...data}});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/executive-growth-priorities'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const [attr,lowMargin,channelRisk,atRisk,bundle]=await Promise.all([
