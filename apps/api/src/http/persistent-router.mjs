@@ -395,6 +395,46 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
   if(method==='POST'&&url==='/api/v1/marketing/content'){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const title=cleanOptional(body.title),slug=cleanOptional(body.slug).toLowerCase(),contentType=cleanOptional(body.contentType),channel=cleanOptional(body.channel),contentBody=cleanOptional(body.body),primaryKeyword=cleanOptional(body.primaryKeyword),metaDescription=cleanOptional(body.metaDescription),scheduledAt=body.scheduledAt?parseDate(body.scheduledAt):null;if(title.length<3||title.length>200||!slug||slug.length>200||!/^[-a-z0-9\u0600-\u06ff]+$/.test(slug)||!['social','blog','email','landing_page'].includes(contentType)||!validContentChannel(channel,false)||contentBody.length>50000||primaryKeyword.length>120||metaDescription.length>200||(body.scheduledAt&&!scheduledAt))return response(400,{error:'invalid_marketing_content'});try{return response(201,{content:await createContent(db,{title,slug,contentType,channel,body:contentBody,primaryKeyword,metaDescription,scheduledAt,actorUserId:context.userId})});}catch(error){if(error.code==='23505')return response(409,{error:'content_slug_exists'});throw error;}}
   const contentTransitionMatch=url.match(/^\/api\/v1\/marketing\/content\/([^/]+)\/transition$/);if(method==='POST'&&contentTransitionMatch){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const to=cleanOptional(body.to),scheduledAt=body.scheduledAt?parseDate(body.scheduledAt):null;if(!validContentStatus(to,false)||(body.scheduledAt&&!scheduledAt))return response(400,{error:'invalid_content_transition'});try{const content=await transitionContent(db,{contentId:contentTransitionMatch[1],to,scheduledAt,actorUserId:context.userId});return content?response(200,{content}):response(404,{error:'marketing_content_not_found'});}catch(error){if(error.message.includes('Invalid content transition')||error.message.includes('Schedule time required'))return response(409,{error:'content_transition_conflict',message:error.message});throw error;}}
 
+  if(method==='GET'&&url==='/api/v1/marketing/executive-brief-live'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient(),commerce=createSubilCommerceAnalyticsClient();
+    let store=null,commerceData=null;
+    if(woo.configured){try{store=await woo.getStoreIntelligence()}catch{}}
+    if(commerce.configured){try{commerceData=await commerce.getAnalytics()}catch{}}
+    const revenueRows=(await db.query(`SELECT COUNT(*)::integer AS orders,COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue,
+      COALESCE(AVG(total_ex_vat),0)::numeric(14,2) AS aov FROM orders WHERE paid_at>=now()-interval '90 days'`)).rows[0]||{};
+    const channelRows=(await db.query(`SELECT COALESCE(NULLIF(mt.source,''),'(direct)') AS source,COUNT(DISTINCT oa.order_id)::integer AS orders,
+      COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue
+      FROM order_attribution oa JOIN orders o ON o.id=oa.order_id JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+      WHERE o.paid_at>=now()-interval '90 days'
+      GROUP BY COALESCE(NULLIF(mt.source,''),'(direct)') ORDER BY revenue DESC LIMIT 5`)).rows;
+    const topProduct=(await db.query(`SELECT oi.product_name,SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,COUNT(DISTINCT oi.order_id)::integer AS orders
+      FROM order_items oi JOIN orders o ON o.id=oi.order_id
+      WHERE o.paid_at>=now()-interval '90 days'
+      GROUP BY oi.product_name ORDER BY revenue DESC LIMIT 1`)).rows[0]||null;
+    const contentTop=(await db.query(`SELECT COALESCE(NULLIF(mt.content,''),'(بدون محتوى)') AS content,
+      COUNT(DISTINCT oa.order_id)::integer AS orders,COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue
+      FROM order_attribution oa JOIN orders o ON o.id=oa.order_id JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+      WHERE o.paid_at>=now()-interval '90 days' AND NULLIF(mt.content,'') IS NOT NULL
+      GROUP BY mt.content ORDER BY revenue DESC LIMIT 1`)).rows[0]||null;
+    const actions=[];
+    if((store?.products?.seo?.highPriority||0)>0)actions.push({priority:'high',title:'معالجة فرص SEO عالية الأولوية',reason:`هناك ${store.products.seo.highPriority} منتجًا بأولوية عالية.`,action:'ابدأ بأعلى المنتجات في SEO Queue وطبق التحسين الآمن ثم راقب الزيارات والتحويل.'});
+    if((store?.customers?.atRisk||0)>0)actions.push({priority:'high',title:'تشغيل Win-back للعملاء المعرضين للفقد',reason:`تم رصد ${store.customers.atRisk} عميلًا متكررًا دون شراء حديث.`,action:'جهز رحلة استعادة للموافقين على التسويق مرتبطة بالصيانة والمنتج التالي المناسب.'});
+    const aov=Number(revenueRows.aov||0);
+    if(aov<300)actions.push({priority:'medium',title:'رفع متوسط قيمة الطلب',reason:`AOV الحالي ${aov.toFixed(0)} ر.س.`,action:'وسع Cross-sell وUpsell على صفحات المنتجات والسلة وراقب multi-item AOV.'});
+    if(!channelRows.length)actions.push({priority:'high',title:'سد فجوة Attribution',reason:'لا توجد قنوات منسوبة كفاية للطلبات الأخيرة.',action:'تحقق من UTM وWooCommerce Order Attribution ثم راقب الطلبات الجديدة.'});
+    if(commerceData?.dataQuality&&!commerceData.dataQuality.healthy)actions.push({priority:'medium',title:'تنظيف جودة بيانات المتجر',reason:`${commerceData.dataQuality.warnings.length} تحذير جودة بيانات موجود.`,action:'استبعد القيم الشاذة من القرار حتى تصحيح المصدر، ولا تستخدمها في ترتيب المنتجات.'});
+    const summary={
+      revenue:Number(revenueRows.revenue||0),orders:Number(revenueRows.orders||0),aov,
+      topProduct,topChannel:channelRows[0]||null,topContent:contentTop,
+      seo:{needsWork:store?.products?.seo?.needsWork||0,highPriority:store?.products?.seo?.highPriority||0},
+      customers:{vip:store?.customers?.vipCustomers||0,repeat:store?.customers?.repeatCustomers||0,atRisk:store?.customers?.atRisk||0},
+      dataQuality:commerceData?.dataQuality||null
+    };
+    const headline=summary.revenue>0?`حقق المتجر ${summary.revenue.toFixed(0)} ر.س من ${summary.orders} طلبًا خلال آخر 90 يومًا بمتوسط ${summary.aov.toFixed(0)} ر.س للطلب.`:'لا توجد مبيعات مدفوعة كافية في بيانات سبيل خلال آخر 90 يومًا.';
+    return response(200,{generatedAt:new Date().toISOString(),headline,summary,actions:actions.slice(0,3)});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/revenue-intelligence'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const [summary,products,channels,segments]=await Promise.all([
