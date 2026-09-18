@@ -488,6 +488,34 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{items:rows,summary:{drafts:rows.length,converted:rows.filter(x=>x.converted).length}});
   }
 
+  const retentionDraftMatch=url.match(/^\/api\/v1\/marketing\/customers\/([^/]+)\/retention-journey-draft$/);
+  if(method==='POST'&&retentionDraftMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const customerId=retentionDraftMatch[1],journey=cleanOptional(body.journey),reason=cleanLongText(body.reason,300);
+    const allowed=['maintenance_due','winback','vip_loyalty','repeat_growth','nurture'];
+    if(!allowed.includes(journey))return response(400,{error:'invalid_retention_journey'});
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.retention_journey_draft' AND entity_type='customer' AND entity_id=$1 AND data->>'journey'=$2 AND created_at>=now()-interval '30 days' LIMIT 1`,[customerId,journey])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    const messages={
+      maintenance_due:'تذكير بصيانة الجهاز أو الفلتر قبل الموعد أو بعد تجاوزه.',
+      winback:'إعادة تنشيط العميل بمحتوى وخدمة مناسبة دون خصم تلقائي.',
+      vip_loyalty:'اقتراح مزايا ولاء وإحالة وخدمة مميزة للعميل مرتفع القيمة.',
+      repeat_growth:'اقتراح Cross-sell أو Upsell مناسب بناءً على مشتريات العميل.',
+      nurture:'استمرار التواصل بالمحتوى المناسب حتى ظهور إشارة أقوى.'
+    };
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.retention_journey_draft','customer',$2,$3::jsonb)`,[context.userId,customerId,JSON.stringify({journey,reason,message:messages[journey],status:'draft',createdAt:new Date().toISOString()})]);
+    return response(201,{draft:{customerId,journey,reason,message:messages[journey],status:'draft'}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/retention/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT al.id,al.entity_id AS customer_id,al.data->>'journey' AS journey,al.created_at,
+      EXISTS(SELECT 1 FROM orders o WHERE o.customer_id::text=al.entity_id AND o.paid_at>al.created_at) AS converted
+      FROM audit_log al WHERE al.action='ai.retention_journey_draft' ORDER BY al.created_at DESC LIMIT 100`)).rows;
+    return response(200,{items:rows,summary:{drafts:rows.length,converted:rows.filter(x=>x.converted).length}});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/retention-journeys'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const rows=(await db.query(`WITH base AS(
