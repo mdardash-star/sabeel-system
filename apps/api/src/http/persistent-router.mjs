@@ -244,6 +244,41 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     }catch(error){return response(502,{error:'content_draft_creation_failed'});}
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/store/backfill-status'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [orders,attributed,batches,lastBatch]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS total,MIN(paid_at) AS first_paid_at,MAX(paid_at) AS last_paid_at,COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue FROM orders WHERE external_source='woocommerce'`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution oa JOIN orders o ON o.id=oa.order_id WHERE o.external_source='woocommerce'`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM audit_log WHERE action='woocommerce.backfill_batch'`),
+      db.query(`SELECT created_at,data FROM audit_log WHERE action='woocommerce.backfill_batch' ORDER BY created_at DESC LIMIT 1`)
+    ]);
+    const o=orders.rows[0]||{},a=attributed.rows[0]||{},b=batches.rows[0]||{},last=lastBatch.rows[0]||null,total=Number(o.total||0),attr=Number(a.total||0);
+    return response(200,{coverage:{storedOrders:total,attributedOrders:attr,attributionRate:total?attr/total*100:0,revenue:Number(o.revenue||0),firstPaidAt:o.first_paid_at||null,lastPaidAt:o.last_paid_at||null,batches:Number(b.total||0)},lastBatch:last?{createdAt:last.created_at,...last.data}:null});
+  }
+
+  if(method==='POST'&&url==='/api/v1/marketing/store/backfill-orders'){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const page=Math.max(1,Number(body.page||1)),perPage=Math.min(25,Math.max(1,Number(body.perPage||25)));
+    if(!Number.isInteger(page)||!Number.isInteger(perPage))return response(400,{error:'invalid_backfill_page'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    const statuses=['processing','completed'],summary={page,perPage,processed:0,created:0,duplicates:0,failed:0,byStatus:{}};
+    for(const status of statuses){
+      let orders=[];try{orders=await woo.listRawOrders({page,perPage,status});}catch(error){return response(502,{error:'woocommerce_backfill_fetch_failed',status});}
+      summary.byStatus[status]=orders.length;
+      for(const order of orders){
+        summary.processed++;
+        try{
+          const result=await persistPaidServiceOrder(db,order,{organizationId:context.tenantId||undefined});
+          if(result?.duplicate)summary.duplicates++;else summary.created++;
+        }catch(error){summary.failed++;}
+      }
+    }
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'woocommerce.backfill_batch','woocommerce','orders',$2::jsonb)`,[context.userId,JSON.stringify(summary)]);
+    return response(200,{summary,nextPage:summary.processed>0?page+1:null});
+  }
+
   if (method === 'GET' && url === '/api/v1/marketing/store/commerce-analytics') {
     if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
     const analytics=createSubilCommerceAnalyticsClient();
