@@ -77,6 +77,11 @@ export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_
       const paid=orders.filter(o=>['processing','completed'].includes(o.status));
       const revenue=paid.reduce((sum,o)=>sum+o.total,0);
       const aov=paid.length?revenue/paid.length:0;
+      const singleItemOrders=paid.filter(o=>(o.lineItems||[]).reduce((n,x)=>n+Number(x.quantity||0),0)<=1);
+      const multiItemOrders=paid.filter(o=>(o.lineItems||[]).reduce((n,x)=>n+Number(x.quantity||0),0)>1);
+      const singleItemAov=singleItemOrders.length?singleItemOrders.reduce((s,o)=>s+o.total,0)/singleItemOrders.length:0;
+      const multiItemAov=multiItemOrders.length?multiItemOrders.reduce((s,o)=>s+o.total,0)/multiItemOrders.length:0;
+      const crossSellLift=singleItemAov>0?((multiItemAov-singleItemAov)/singleItemAov)*100:0;
       const byCustomer=new Map();
       for(const o of paid){
         const key=o.customerId||o.email||o.phone||`guest-${o.id}`;
@@ -124,7 +129,7 @@ export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_
       };
       return {
         snapshotAt:new Date().toISOString(),
-        orders:{sample:orders.length,paid:paid.length,revenue,aov},
+        orders:{sample:orders.length,paid:paid.length,revenue,aov,singleItemAov,multiItemAov,crossSellLift,singleItemOrders:singleItemOrders.length,multiItemOrders:multiItemOrders.length},
         customers:{sample:customers.length,repeatCustomers,highValueCustomers,vipCustomers,dormant90d:dormantRows.length,atRisk:atRiskRows.length,topCustomers},
         products:{sample:products.length,topProducts,seo:seoSummary,crossSellPairs}
       };
