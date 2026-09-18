@@ -17,6 +17,7 @@ import { scanSalesOpportunities, updateSalesOpportunity } from '../ai/sales.mjs'
 import { scanMarketingRecommendations, updateMarketingRecommendation } from '../ai/marketing.mjs';
 import { scanFinanceAnomalies, updateFinanceAnomaly } from '../ai/finance.mjs';
 import { rateCustomerJob } from '../crm/customer-portal.mjs';
+import { createWooCommerceCatalogClient } from '../integrations/woocommerce-catalog.mjs';
 import { disablePushSubscription, getNotificationSettings, savePushSubscription, updateNotificationSettings } from '../notifications/push.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
@@ -186,6 +187,33 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     if (!range) return response(400, { error: 'invalid_date_range' });
     const report = await createRepositories(db).reports.profitability(range.from, range.to, context.tenantId||null);
     return response(200, { ...report, range });
+  }
+
+  if (method === 'GET' && url === '/api/v1/marketing/store/products') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const products=await woo.listProducts({page:Number(context.page||1),perPage:Math.min(Number(context.perPage||24),50),search:context.search||'',category:context.category||''});
+      return response(200,{connected:true,products});
+    }catch(error){return response(502,{error:'woocommerce_unavailable'});}
+  }
+  const marketingStoreProductMatch=url.match(/^\/api\/v1\/marketing\/store\/products\/([^/]+)$/);
+  if (method === 'PATCH' && marketingStoreProductMatch) {
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const product=await woo.updateProduct(marketingStoreProductMatch[1],{
+        name:typeof body.name==='string'?body.name:undefined,
+        shortDescription:typeof body.shortDescription==='string'?body.shortDescription:undefined,
+        description:typeof body.description==='string'?body.description:undefined
+      });
+      return response(200,{product});
+    }catch(error){
+      if(error.message==='No safe product fields supplied')return response(400,{error:'no_safe_fields'});
+      return response(502,{error:'woocommerce_update_failed'});
+    }
   }
 
   if (method === 'GET' && url === '/api/v1/marketing/stats') {
