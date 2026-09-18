@@ -200,6 +200,27 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     }});
   }
 
+  if (method === 'GET' && url === '/api/v1/marketing/store/content-ideas') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const intel=await woo.getStoreIntelligence();
+      const opportunities=intel?.products?.seo?.opportunities||[];
+      const ideas=opportunities.slice(0,12).map((x,index)=>({
+        id:`seo-${x.id}`,
+        priority:x.priority,
+        productId:x.id,
+        productName:x.name,
+        title:index%3===0?`دليل اختيار ${x.name}`:index%3===1?`أسئلة شائعة عن ${x.name}`:`مقارنة واستخدامات ${x.name}`,
+        angle:index%3===0?'دليل شراء واستخدام':index%3===1?'FAQ وتحسين التحويل':'مقارنة وتعليم العميل',
+        suggestedChannel:index%2===0?'website':'email',
+        sourceIssues:x.issues
+      }));
+      return response(200,{ideas});
+    }catch(error){return response(502,{error:'woocommerce_unavailable'});}
+  }
+
   if (method === 'GET' && url === '/api/v1/marketing/store/intelligence') {
     if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
     const woo=createWooCommerceCatalogClient();
