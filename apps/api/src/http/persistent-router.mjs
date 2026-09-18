@@ -395,6 +395,48 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
   if(method==='POST'&&url==='/api/v1/marketing/content'){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const title=cleanOptional(body.title),slug=cleanOptional(body.slug).toLowerCase(),contentType=cleanOptional(body.contentType),channel=cleanOptional(body.channel),contentBody=cleanOptional(body.body),primaryKeyword=cleanOptional(body.primaryKeyword),metaDescription=cleanOptional(body.metaDescription),scheduledAt=body.scheduledAt?parseDate(body.scheduledAt):null;if(title.length<3||title.length>200||!slug||slug.length>200||!/^[-a-z0-9\u0600-\u06ff]+$/.test(slug)||!['social','blog','email','landing_page'].includes(contentType)||!validContentChannel(channel,false)||contentBody.length>50000||primaryKeyword.length>120||metaDescription.length>200||(body.scheduledAt&&!scheduledAt))return response(400,{error:'invalid_marketing_content'});try{return response(201,{content:await createContent(db,{title,slug,contentType,channel,body:contentBody,primaryKeyword,metaDescription,scheduledAt,actorUserId:context.userId})});}catch(error){if(error.code==='23505')return response(409,{error:'content_slug_exists'});throw error;}}
   const contentTransitionMatch=url.match(/^\/api\/v1\/marketing\/content\/([^/]+)\/transition$/);if(method==='POST'&&contentTransitionMatch){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const to=cleanOptional(body.to),scheduledAt=body.scheduledAt?parseDate(body.scheduledAt):null;if(!validContentStatus(to,false)||(body.scheduledAt&&!scheduledAt))return response(400,{error:'invalid_content_transition'});try{const content=await transitionContent(db,{contentId:contentTransitionMatch[1],to,scheduledAt,actorUserId:context.userId});return content?response(200,{content}):response(404,{error:'marketing_content_not_found'});}catch(error){if(error.message.includes('Invalid content transition')||error.message.includes('Schedule time required'))return response(409,{error:'content_transition_conflict',message:error.message});throw error;}}
 
+  if(method==='GET'&&url==='/api/v1/marketing/revenue-intelligence'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [summary,products,channels,segments]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS orders,COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue,
+        COALESCE(AVG(total_ex_vat),0)::numeric(14,2) AS aov
+        FROM orders WHERE paid_at>=now()-interval '90 days'`),
+      db.query(`SELECT oi.product_id,oi.product_name,SUM(oi.quantity)::numeric(14,2) AS units,
+        SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
+        COUNT(DISTINCT oi.order_id)::integer AS orders
+        FROM order_items oi JOIN orders o ON o.id=oi.order_id
+        WHERE o.paid_at>=now()-interval '90 days'
+        GROUP BY oi.product_id,oi.product_name ORDER BY revenue DESC LIMIT 20`),
+      db.query(`SELECT COALESCE(NULLIF(mt.source,''),'(direct)') AS source,
+        COUNT(DISTINCT oa.order_id)::integer AS orders,
+        COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue
+        FROM order_attribution oa JOIN orders o ON o.id=oa.order_id JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+        WHERE o.paid_at>=now()-interval '90 days'
+        GROUP BY COALESCE(NULLIF(mt.source,''),'(direct)') ORDER BY revenue DESC`),
+      db.query(`WITH spend AS(
+        SELECT c.id,c.name,COUNT(o.id)::integer AS orders,COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
+          MAX(o.paid_at) AS last_order_at
+        FROM customers c LEFT JOIN orders o ON o.customer_id=c.id AND o.paid_at>=now()-interval '365 days'
+        GROUP BY c.id,c.name
+      )
+      SELECT CASE
+        WHEN orders>=3 OR revenue>=3000 THEN 'VIP'
+        WHEN orders>=2 THEN 'repeat'
+        WHEN revenue>=2000 THEN 'high_value'
+        WHEN last_order_at<now()-interval '90 days' THEN 'dormant'
+        ELSE 'standard' END AS segment,
+        COUNT(*)::integer AS customers,COALESCE(SUM(revenue),0)::numeric(14,2) AS revenue
+      FROM spend GROUP BY 1 ORDER BY revenue DESC`)
+    ]);
+    const s=summary.rows[0]||{orders:0,revenue:0,aov:0};
+    const alerts=[];
+    if(Number(s.orders)>0&&Number(s.aov)<300)alerts.push({type:'aov_low',priority:'medium',message:'متوسط قيمة الطلب أقل من 300 ر.س خلال آخر 90 يومًا.'});
+    if((channels.rows||[]).length===0)alerts.push({type:'attribution_gap',priority:'high',message:'لا توجد قنوات منسوبة للمبيعات في الفترة الحالية.'});
+    const dominant=products.rows?.[0];
+    if(dominant&&Number(s.revenue)>0&&Number(dominant.revenue)/Number(s.revenue)>0.5)alerts.push({type:'product_concentration',priority:'medium',message:`أكثر من 50% من الإيراد يعتمد على المنتج: ${dominant.product_name}`});
+    return response(200,{summary:s,products:products.rows,channels:channels.rows,segments:segments.rows,alerts});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/content-attribution'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const rows=(await db.query(`SELECT
