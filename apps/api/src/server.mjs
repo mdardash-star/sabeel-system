@@ -10,8 +10,11 @@ import { requestOtp } from './auth/otp-service.mjs';
 import { tenantContext } from './auth/tenant-context.mjs';
 import { routeAuthRequest } from './http/auth-router.mjs';
 import { createOtpSender } from './integrations/otp-sender.mjs';
+import { ingestWooCommerceOrderWebhook } from './integrations/woocommerce-ingress.mjs';
 
-export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } = {}) {
+const WOOCOMMERCE_WEBHOOK_PATH = '/api/v1/integrations/woocommerce/orders';
+
+export function createRequestHandler({ db = null, auth = {}, corsOrigins = [], wooCommerceWebhookSecret = null } = {}) {
   return async function handleRequest(req, res) {
     try {
       const corsAllowed = applyCors(req, res, corsOrigins);
@@ -29,7 +32,12 @@ export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } 
           return sendJson(res, 503, { service: 'subil-api', status: 'not_ready', database: 'unavailable' });
         }
       }
-      const body = await readJson(req);
+      const { raw: rawBody, json: body } = await readJson(req);
+
+      if (req.method === 'POST' && requestUrl.pathname === WOOCOMMERCE_WEBHOOK_PATH) {
+        return handleWooCommerceWebhook(res, { db, rawBody, headers: req.headers, secret: wooCommerceWebhookSecret });
+      }
+
       const authRoute = isAuthRoute(req.method, requestUrl.pathname);
       if (authRoute) {
         const result = await routeAuthRequest({
@@ -89,7 +97,7 @@ export function createRequestHandler({ db = null, auth = {}, corsOrigins = [] } 
   };
 }
 
-export function createApiServer({ db = createDatabase(), auth = {}, corsOrigins = parseCorsOrigins(process.env.SUBIL_ADMIN_ORIGINS) } = {}) {
+export function createApiServer({ db = createDatabase(), auth = {}, corsOrigins = parseCorsOrigins(process.env.SUBIL_ADMIN_ORIGINS), wooCommerceWebhookSecret = process.env.WOOCOMMERCE_WEBHOOK_SECRET } = {}) {
   const otpTestMode = String(process.env.SUBIL_OTP_TEST_MODE || '').toLowerCase() === 'true';
   if (otpTestMode && process.env.NODE_ENV === 'production') {
     throw new Error('OTP test mode cannot run in production');
@@ -113,7 +121,7 @@ export function createApiServer({ db = createDatabase(), auth = {}, corsOrigins 
     } : {}),
     ...auth
   };
-  return http.createServer(createRequestHandler({ db, auth: runtimeAuth, corsOrigins }));
+  return http.createServer(createRequestHandler({ db, auth: runtimeAuth, corsOrigins, wooCommerceWebhookSecret }));
 }
 
 function parseCorsOrigins(value) {
@@ -202,13 +210,37 @@ function isPersistentRoute(method, pathname) {
     /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname));
 }
 
+async function handleWooCommerceWebhook(res, { db, rawBody, headers, secret }) {
+  if (!db) return sendJson(res, 503, { error: 'service_unavailable' });
+  if (!secret) return sendJson(res, 500, { error: 'webhook_not_configured' });
+  try {
+    const result = await ingestWooCommerceOrderWebhook(db, { rawBody, headers, secret });
+    return sendJson(res, 200, {
+      accepted: result.accepted,
+      duplicate: Boolean(result.duplicate),
+      serviceRequired: Boolean(result.serviceRequired)
+    });
+  } catch (error) {
+    if (error.message === 'Invalid WooCommerce webhook signature') return sendJson(res, 401, { error: 'invalid_signature' });
+    if (error.message === 'WooCommerce webhook delivery id is required') return sendJson(res, 400, { error: 'missing_delivery_id' });
+    if (error.message === 'Invalid WooCommerce webhook JSON') return sendJson(res, 400, { error: 'invalid_webhook_payload' });
+    if (error.message === 'Expired WooCommerce webhook') return sendJson(res, 400, { error: 'expired_webhook' });
+    // An order that isn't paid yet (pending/on-hold/cancelled/failed) is not
+    // an error: WooCommerce may deliver order.updated for any status change.
+    if (error.message === 'Order must be paid before creating a service job') {
+      return sendJson(res, 200, { accepted: true, serviceRequired: false, reason: 'order_not_paid_yet' });
+    }
+    return sendJson(res, 503, { error: 'service_unavailable' });
+  }
+}
+
 function sendJson(res, status, data) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(data));
 }
 
 function readJson(req) {
-  if (req.method === 'GET' || req.method === 'HEAD') return Promise.resolve({});
+  if (req.method === 'GET' || req.method === 'HEAD') return Promise.resolve({ raw: '', json: {} });
   return new Promise((resolve, reject) => {
     let raw = '';
     req.on('data', chunk => {
@@ -216,8 +248,8 @@ function readJson(req) {
       if (raw.length > 1_000_000) reject(new Error('payload_too_large'));
     });
     req.on('end', () => {
-      if (!raw) return resolve({});
-      try { resolve(JSON.parse(raw)); } catch { reject(new Error('invalid_json')); }
+      if (!raw) return resolve({ raw: '', json: {} });
+      try { resolve({ raw, json: JSON.parse(raw) }); } catch { reject(new Error('invalid_json')); }
     });
     req.on('error', reject);
   });

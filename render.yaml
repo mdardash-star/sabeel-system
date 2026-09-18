@@ -27,6 +27,8 @@ services:
         sync: false
       - key: SUBIL_ADMIN_ORIGINS
         value: "https://subil-admin.onrender.com,https://subil-technician.onrender.com,https://subil-mobile.onrender.com"
+      - key: WOOCOMMERCE_WEBHOOK_SECRET
+        sync: false
       - key: PUSH_PROVIDER_URL
         sync: false
       - key: PUSH_PROVIDER_API_KEY
