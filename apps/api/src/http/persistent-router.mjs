@@ -200,6 +200,24 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     }});
   }
 
+  const contentIdeaDraftMatch=url.match(/^\/api\/v1\/marketing\/store\/content-ideas\/([^/]+)\/draft$/);
+  if (method === 'POST' && contentIdeaDraftMatch) {
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const product=await woo.getProduct(contentIdeaDraftMatch[1]);
+      const keyword=product.name.split('–')[0].trim().slice(0,120);
+      const title=cleanLongText(body.title,180)||`دليل ${product.name}`;
+      const slug=String(title).toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-|-$/g,'').slice(0,180);
+      const metaDescription=`تعرف على ${product.name}، أهم الاستخدامات والمميزات وما الذي يجب معرفته قبل الشراء من سبيل.`.slice(0,160);
+      const bodyHtml=`<h2>${title}</h2><p>هذا الدليل يساعدك على فهم ${product.name} واستخدامه المناسب قبل اتخاذ قرار الشراء.</p><h3>ما هو المنتج؟</h3><p>${product.shortDescription||'منتج من متجر سبيل ضمن حلول المياه المنزلية.'}</p><h3>متى يكون مناسبًا؟</h3><p>يعتمد الاختيار على احتياج المنزل أو المنشأة، مصدر المياه، ونوع الاستخدام. يفضل مراجعة المواصفات ونطاق التركيب قبل الشراء.</p><h3>ما الذي يجب الانتباه له؟</h3><ul><li>التأكد من توافق المنتج مع موقع التركيب.</li><li>مراجعة متطلبات الصيانة وقطع الغيار.</li><li>اختيار المنتج بناءً على الاستخدام الفعلي وليس الاسم فقط.</li></ul><h3>منتجات وخدمات سبيل</h3><p>يمكنك مراجعة صفحة المنتج في متجر سبيل للحصول على السعر والمواصفات الحالية وخيارات الطلب.</p>`;
+      const item=await createContent(db,{title,slug,contentType:'article',channel:'website',body:bodyHtml,primaryKeyword:keyword,metaDescription,scheduledAt:null,actorUserId:context.userId});
+      return response(201,{content:item,sourceProduct:product});
+    }catch(error){return response(502,{error:'content_draft_creation_failed'});}
+  }
+
   if (method === 'GET' && url === '/api/v1/marketing/store/content-ideas') {
     if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
     const woo=createWooCommerceCatalogClient();
