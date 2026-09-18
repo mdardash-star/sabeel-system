@@ -11,6 +11,8 @@ import { tenantContext } from './auth/tenant-context.mjs';
 import { routeAuthRequest } from './http/auth-router.mjs';
 import { createOtpSender } from './integrations/otp-sender.mjs';
 import { ingestWooCommerceOrderWebhook } from './integrations/woocommerce-ingress.mjs';
+import { createMarketingChannelSender } from './integrations/marketing-channel-sender.mjs';
+import { processMarketingBatch } from './notifications/marketing-channels.mjs';
 
 const WOOCOMMERCE_WEBHOOK_PATH = '/api/v1/integrations/woocommerce/orders';
 
@@ -159,7 +161,7 @@ function isPersistentRoute(method, pathname) {
       pathname === '/api/v1/technicians/stats' || pathname === '/api/v1/technicians' ||
       pathname === '/api/v1/settlements/stats' || pathname === '/api/v1/settlements' ||
       pathname === '/api/v1/reports/profitability' ||
-      ['/api/v1/marketing/stats','/api/v1/marketing/segments','/api/v1/marketing/campaigns','/api/v1/marketing/audience-preview'].includes(pathname) ||
+      ['/api/v1/marketing/stats','/api/v1/marketing/segments','/api/v1/marketing/campaigns','/api/v1/marketing/audience-preview','/api/v1/marketing/store/products','/api/v1/marketing/store/intelligence','/api/v1/marketing/store/orders','/api/v1/marketing/store/customers'].includes(pathname) ||
       ['/api/v1/marketing/abandoned-carts','/api/v1/marketing/abandoned-carts/stats'].includes(pathname) ||
       ['/api/v1/marketing/content','/api/v1/marketing/content/stats'].includes(pathname) ||
       pathname==='/api/v1/marketing/attribution' ||
@@ -204,7 +206,7 @@ function isPersistentRoute(method, pathname) {
   }
   if (method === 'PATCH' && /^\/api\/v1\/users\/[^/]+$/.test(pathname)) return true;
   if (method === 'PATCH' && pathname === '/api/v1/notifications/me') return true;
-  return method === 'PATCH' && (/^\/api\/v1\/ai\/finance\/anomalies\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/marketing\/recommendations\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/sales\/opportunities\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/insights\/[^/]+$/.test(pathname) || /^\/api\/v1\/conversations\/[^/]+$/.test(pathname) || /^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
+  return method === 'PATCH' && (/^\/api\/v1\/marketing\/store\/products\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/finance\/anomalies\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/marketing\/recommendations\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/sales\/opportunities\/[^/]+$/.test(pathname) || /^\/api\/v1\/ai\/insights\/[^/]+$/.test(pathname) || /^\/api\/v1\/conversations\/[^/]+$/.test(pathname) || /^\/api\/v1\/customers\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/customers\/[^/]+\/assets\/[^/]+$/.test(pathname) ||
     /^\/api\/v1\/technicians\/[^/]+\/status$/.test(pathname) ||
     /^\/api\/v1\/technicians\/me\/jobs\/[^/]+\/status$/.test(pathname));
@@ -264,9 +266,25 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.log(`SUBIL API listening on ${port}`);
   });
 
-  const shutdown = () => server.close(() => {
-    Promise.resolve(db?.close?.()).finally(() => process.exit(0));
-  });
+  const marketingSender=createMarketingChannelSender();
+  let marketingWorkerTimer=null;
+  if(marketingSender.whatsappConfigured||marketingSender.emailConfigured){
+    const interval=Math.max(10000,Number(process.env.MARKETING_WORKER_INTERVAL_MS||30000));
+    const runMarketing=()=>processMarketingBatch(db,{sender:marketingSender,limit:Number(process.env.MARKETING_BATCH_SIZE||50)})
+      .then(r=>console.log(JSON.stringify({worker:'marketing',...r})))
+      .catch(e=>console.error(JSON.stringify({worker:'marketing',error:e.message})));
+    runMarketing();
+    marketingWorkerTimer=setInterval(runMarketing,interval);
+  } else {
+    console.log(JSON.stringify({worker:'marketing',status:'disabled',reason:'providers_not_configured'}));
+  }
+
+  const shutdown = () => {
+    if(marketingWorkerTimer)clearInterval(marketingWorkerTimer);
+    server.close(() => {
+      Promise.resolve(db?.close?.()).finally(() => process.exit(0));
+    });
+  };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
 }
