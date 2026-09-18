@@ -200,6 +200,41 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/profit-data-coverage'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [summary,products]=await Promise.all([
+      db.query(`SELECT
+        COUNT(oi.*)::integer AS total_items,
+        COUNT(oi.*) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)>0)::integer AS costed_items,
+        COUNT(oi.*) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)<=0)::integer AS zero_cost_items,
+        COUNT(DISTINCT o.id)::integer AS total_orders,
+        COUNT(DISTINCT o.id) FILTER(WHERE EXISTS(
+          SELECT 1 FROM order_items oi2 WHERE oi2.order_id=o.id AND COALESCE(oi2.unit_cost_snapshot,0)<=0
+        ))::integer AS affected_orders,
+        COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue,
+        COALESCE(SUM(oi.subtotal_ex_vat) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)<=0),0)::numeric(14,2) AS affected_revenue
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id
+        WHERE o.paid_at>=now()-interval '90 days'`),
+      db.query(`SELECT oi.product_id,oi.product_name,
+        COUNT(*)::integer AS lines,
+        COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id
+        WHERE o.paid_at>=now()-interval '90 days' AND COALESCE(oi.unit_cost_snapshot,0)<=0
+        GROUP BY oi.product_id,oi.product_name
+        ORDER BY revenue DESC LIMIT 20`)
+    ]);
+    const s=summary.rows[0]||{},totalItems=Number(s.total_items||0),costedItems=Number(s.costed_items||0),
+      totalOrders=Number(s.total_orders||0),affectedOrders=Number(s.affected_orders||0),
+      revenue=Number(s.revenue||0),affectedRevenue=Number(s.affected_revenue||0);
+    return response(200,{summary:{
+      totalItems,costedItems,zeroCostItems:Number(s.zero_cost_items||0),
+      itemCostCoverageRate:totalItems?costedItems/totalItems*100:0,
+      totalOrders,affectedOrders,orderCoverageRate:totalOrders?(totalOrders-affectedOrders)/totalOrders*100:0,
+      revenue,affectedRevenue,revenueCoverageRate:revenue?(revenue-affectedRevenue)/revenue*100:0,
+      status:affectedRevenue/revenue>0.2?'risk':affectedRevenue>0?'partial':'good'
+    },zeroCostProducts:products.rows});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/growth-priority-drafts'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const rows=(await db.query(`SELECT d.id,d.entity_id AS priority_key,d.data,d.created_at,
