@@ -200,6 +200,39 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/attribution-coverage'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [summary,sources,unattributed]=await Promise.all([
+      db.query(`SELECT
+        COUNT(*)::integer AS total,
+        COUNT(oa.order_id)::integer AS attributed,
+        COUNT(*) FILTER(WHERE oa.order_id IS NULL)::integer AS unattributed,
+        COUNT(*) FILTER(WHERE COALESCE(NULLIF(mt.source,''),'(direct)')='(direct)')::integer AS direct
+        FROM orders o
+        LEFT JOIN order_attribution oa ON oa.order_id=o.id
+        LEFT JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+        WHERE o.external_source='woocommerce'`),
+      db.query(`SELECT COALESCE(NULLIF(mt.source,''),'(direct)') AS source,COUNT(*)::integer AS orders,
+        COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue
+        FROM orders o
+        JOIN order_attribution oa ON oa.order_id=o.id
+        JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+        WHERE o.external_source='woocommerce'
+        GROUP BY 1 ORDER BY orders DESC LIMIT 20`),
+      db.query(`SELECT o.id,o.external_order_id,o.paid_at,o.total_ex_vat
+        FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id
+        WHERE o.external_source='woocommerce' AND oa.order_id IS NULL
+        ORDER BY o.paid_at ASC NULLS LAST LIMIT 25`)
+    ]);
+    const s=summary.rows[0]||{},total=Number(s.total||0),attributed=Number(s.attributed||0),unattributedCount=Number(s.unattributed||0),direct=Number(s.direct||0);
+    return response(200,{summary:{
+      total,attributed,unattributed:unattributedCount,direct,
+      attributedRate:total?attributed/total*100:0,
+      unattributedRate:total?unattributedCount/total*100:0,
+      directRate:total?direct/total*100:0
+    },sources:sources.rows,oldestUnattributed:unattributed.rows});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/operational-readiness'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const woo=createWooCommerceCatalogClient(),publisher=createWordPressPublisher(),sender=createMarketingChannelSender();
