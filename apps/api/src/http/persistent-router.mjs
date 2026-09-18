@@ -436,6 +436,15 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{generatedAt:new Date().toISOString(),headline,summary,actions:actions.slice(0,3)});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/autopilot/history'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT id,actor_user_id,action,entity_type,entity_id,data,created_at
+      FROM audit_log
+      WHERE action IN('ai.autopilot_seo_apply','ai.autopilot_winback_draft')
+      ORDER BY created_at DESC LIMIT 50`)).rows;
+    return response(200,{history:rows});
+  }
+
   if(method==='POST'&&url==='/api/v1/marketing/alerts/run'){
     if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
     if(!context.userId)return response(401,{error:'user_identity_required'});
