@@ -189,6 +189,28 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200, { ...report, range });
   }
 
+  if (method === 'GET' && url === '/api/v1/marketing/store/intelligence') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{return response(200,{connected:true,intelligence:await woo.getStoreIntelligence()});}
+    catch(error){return response(502,{error:'woocommerce_unavailable'});}
+  }
+  if (method === 'GET' && url === '/api/v1/marketing/store/orders') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{return response(200,{orders:await woo.listOrders({page:Number(context.page||1),perPage:Math.min(Number(context.perPage||50),100),status:context.status||'any',after:context.after||''})});}
+    catch(error){return response(502,{error:'woocommerce_unavailable'});}
+  }
+  if (method === 'GET' && url === '/api/v1/marketing/store/customers') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{return response(200,{customers:await woo.listCustomers({page:Number(context.page||1),perPage:Math.min(Number(context.perPage||50),100)})});}
+    catch(error){return response(502,{error:'woocommerce_unavailable'});}
+  }
+
   if (method === 'GET' && url === '/api/v1/marketing/store/products') {
     if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
     const woo=createWooCommerceCatalogClient();
