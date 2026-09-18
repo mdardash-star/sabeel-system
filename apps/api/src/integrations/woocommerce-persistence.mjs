@@ -15,8 +15,28 @@ export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh', or
       [organizationId, String(order.id)]
     )).rows[0];
     if (existingOrder) {
+      const paidAt=(order.date_paid_gmt||order.date_paid||order.date_completed_gmt||order.date_completed||existingOrder.paid_at||new Date().toISOString());
+      const refreshed=(await client.query(
+        `UPDATE orders SET paid_at=$2,total_ex_vat=$3 WHERE id=$1 RETURNING *`,
+        [existingOrder.id,paidAt,Number(order.total||0)/1.15]
+      )).rows[0];
+      if(attribution.meaningful){
+        const hasAttribution=(await client.query('SELECT 1 FROM order_attribution WHERE order_id=$1 LIMIT 1',[existingOrder.id])).rows[0];
+        if(!hasAttribution){
+          const touch=(await client.query(
+            `INSERT INTO marketing_touches(visitor_id,customer_id,source,medium,campaign,content,term,landing_url,occurred_at)
+             VALUES(NULL,$1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+            [existingOrder.customer_id,attribution.source,attribution.medium,attribution.campaign,attribution.content,attribution.term,attribution.landingUrl,attribution.occurredAt]
+          )).rows[0];
+          await client.query(
+            `INSERT INTO order_attribution(order_id,first_touch_id,last_touch_id) VALUES($1,$2,$2)
+             ON CONFLICT(order_id) DO NOTHING`,
+            [existingOrder.id,touch.id]
+          );
+        }
+      }
       const existingJob=(await client.query('SELECT * FROM service_jobs WHERE order_id=$1 LIMIT 1',[existingOrder.id])).rows[0]||null;
-      return { serviceRequired:Boolean(existingJob), duplicate:true, order:existingOrder, job:existingJob };
+      return { serviceRequired:Boolean(existingJob), duplicate:true, order:refreshed, job:existingJob, attribution:attribution.meaningful?attribution:null };
     }
 
     let customer = (await client.query(
