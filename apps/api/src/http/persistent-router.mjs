@@ -468,6 +468,54 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,await scanMarketingAlerts(db,{actorUserId:context.userId,organizationId:context.tenantId||undefined}));
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/customer-360'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const customers=(await db.query(`WITH base AS(
+      SELECT c.id,c.name,
+        COUNT(DISTINCT o.id)::integer AS orders,
+        COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
+        MAX(o.paid_at) AS last_order_at
+      FROM customers c
+      LEFT JOIN orders o ON o.customer_id=c.id AND o.paid_at IS NOT NULL
+      GROUP BY c.id,c.name
+    )
+    SELECT *,CASE
+      WHEN orders>=3 OR revenue>=3000 THEN 'VIP'
+      WHEN orders>=2 THEN 'repeat'
+      WHEN revenue>=2000 THEN 'high_value'
+      WHEN last_order_at<now()-interval '90 days' THEN 'dormant'
+      ELSE 'standard' END AS segment
+    FROM base
+    ORDER BY revenue DESC,last_order_at DESC NULLS LAST
+    LIMIT 50`)).rows;
+    const purchaseRows=(await db.query(`SELECT o.customer_id,oi.product_id,oi.product_name,SUM(oi.quantity)::numeric(14,2) AS units
+      FROM orders o JOIN order_items oi ON oi.order_id=o.id
+      WHERE o.paid_at IS NOT NULL
+      GROUP BY o.customer_id,oi.product_id,oi.product_name`)).rows;
+    const pairRows=(await db.query(`SELECT a.product_id AS a_id,a.product_name AS a_name,b.product_id AS b_id,b.product_name AS b_name,COUNT(DISTINCT a.order_id)::integer AS orders
+      FROM order_items a JOIN order_items b ON b.order_id=a.order_id AND b.product_id<>a.product_id
+      JOIN orders o ON o.id=a.order_id
+      WHERE o.paid_at IS NOT NULL AND a.product_id IS NOT NULL AND b.product_id IS NOT NULL
+      GROUP BY a.product_id,a.product_name,b.product_id,b.product_name
+      ORDER BY orders DESC`)).rows;
+    const owned=new Map(),topOwned=new Map();
+    for(const p of purchaseRows){
+      const key=String(p.customer_id),set=owned.get(key)||new Set();set.add(String(p.product_id));owned.set(key,set);
+      const cur=topOwned.get(key);if(!cur||Number(p.units)>Number(cur.units))topOwned.set(key,p);
+    }
+    const suggestions=customers.map(c=>{
+      const key=String(c.id),base=topOwned.get(key),seen=owned.get(key)||new Set();
+      let next=null;
+      if(base){
+        next=pairRows.find(p=>String(p.a_id)===String(base.product_id)&&!seen.has(String(p.b_id)))||null;
+      }
+      return{...c,nextBestProduct:next?{id:String(next.b_id),name:next.b_name,coOrders:Number(next.orders),basedOn:{id:String(base.product_id),name:base.product_name}}:null};
+    });
+    const segments={VIP:0,repeat:0,high_value:0,dormant:0,standard:0};
+    for(const x of suggestions)segments[x.segment]=(segments[x.segment]||0)+1;
+    return response(200,{customers:suggestions,segments});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/revenue-intelligence'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const [summary,products,channels,segments]=await Promise.all([
