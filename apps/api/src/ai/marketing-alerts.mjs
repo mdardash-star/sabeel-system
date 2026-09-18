@@ -28,6 +28,20 @@ export async function scanMarketingAlerts(db,{actorUserId=null,organizationId=DE
       try{const result=await woo.applySafeSeoPatch(target.id);safeActions.push({type:'seo_apply',productId:target.id,changed:Boolean(result.changed)});}catch{}
     }
   }
+  if(atRisk>0){
+    try{
+      const existing=(await c.query(`SELECT id FROM customer_segments WHERE organization_id=$1 AND segment_type='dormant_90d' AND is_active=true ORDER BY created_at DESC LIMIT 1`,[organizationId])).rows[0];
+      let segmentId=existing?.id;
+      if(!segmentId){
+        segmentId=(await c.query(`INSERT INTO customer_segments(organization_id,name,segment_type,created_by)VALUES($1,'Win-back 90 يوم','dormant_90d',$2)RETURNING id`,[organizationId,actorUserId])).rows[0].id;
+      }
+      const recent=(await c.query(`SELECT id FROM marketing_campaigns WHERE organization_id=$1 AND segment_id=$2 AND name='Win-back 90 يوم' AND status IN('draft','scheduled','queued') ORDER BY created_at DESC LIMIT 1`,[organizationId,segmentId])).rows[0];
+      if(!recent){
+        const campaign=(await c.query(`INSERT INTO marketing_campaigns(organization_id,name,segment_id,channel,message,status,created_by)VALUES($1,'Win-back 90 يوم',$2,'whatsapp','مرحبًا، نود تذكيرك بخدمات الصيانة والمنتجات المناسبة لاستخدامك السابق لدى سبيل. يمكننا مساعدتك في اختيار الخطوة التالية المناسبة.','draft',$3)RETURNING id`,[organizationId,segmentId,actorUserId])).rows[0];
+        safeActions.push({type:'winback_draft',campaignId:campaign.id,segmentId});
+      }
+    }catch{}
+  }
   const rows=[];
   for(const a of alerts){
    rows.push((await c.query(`INSERT INTO ai_insights(organization_id,fingerprint,detected_on,domain,severity,title,summary,recommended_action,metrics)
