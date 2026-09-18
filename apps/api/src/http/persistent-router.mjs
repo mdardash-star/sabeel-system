@@ -202,9 +202,42 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
 
   if(method==='GET'&&url==='/api/v1/marketing/growth-priority-drafts'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
-    const rows=(await db.query(`SELECT id,entity_id AS priority_key,data,created_at
-      FROM audit_log WHERE action='ai.growth_priority_draft' ORDER BY created_at DESC LIMIT 100`)).rows;
-    return response(200,{drafts:rows,summary:{total:rows.length}});
+    const rows=(await db.query(`SELECT d.id,d.entity_id AS priority_key,d.data,d.created_at,
+      COALESCE(t.data->>'status',d.data->>'status','draft') AS current_status,
+      t.created_at AS status_updated_at
+      FROM audit_log d
+      LEFT JOIN LATERAL(
+        SELECT data,created_at FROM audit_log t
+        WHERE t.action='ai.growth_priority_status' AND t.entity_type='growth_priority' AND t.entity_id=d.entity_id
+        ORDER BY t.created_at DESC LIMIT 1
+      )t ON true
+      WHERE d.action='ai.growth_priority_draft'
+      ORDER BY d.created_at DESC LIMIT 100`)).rows;
+    return response(200,{drafts:rows,summary:{
+      total:rows.length,
+      draft:rows.filter(x=>x.current_status==='draft').length,
+      approved:rows.filter(x=>x.current_status==='approved').length,
+      inProgress:rows.filter(x=>x.current_status==='in_progress').length,
+      done:rows.filter(x=>x.current_status==='done').length,
+      dismissed:rows.filter(x=>x.current_status==='dismissed').length
+    }});
+  }
+
+  const growthPriorityStatusMatch=url.match(/^\/api\/v1\/marketing\/growth-priority-drafts\/([^/]+)\/status$/);
+  if(method==='POST'&&growthPriorityStatusMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const status=cleanOptional(body.status),allowed=['draft','approved','in_progress','done','dismissed'];
+    if(!allowed.includes(status))return response(400,{error:'invalid_growth_priority_status'});
+    const draft=(await db.query(`SELECT id,entity_id,data FROM audit_log WHERE id=$1 AND action='ai.growth_priority_draft' LIMIT 1`,[growthPriorityStatusMatch[1]])).rows[0];
+    if(!draft)return response(404,{error:'growth_priority_draft_not_found'});
+    const current=(await db.query(`SELECT data->>'status' AS status FROM audit_log WHERE action='ai.growth_priority_status' AND entity_type='growth_priority' AND entity_id=$1 ORDER BY created_at DESC LIMIT 1`,[draft.entity_id])).rows[0]?.status||draft.data?.status||'draft';
+    const transitions={draft:['approved','dismissed'],approved:['in_progress','dismissed'],in_progress:['done','dismissed'],done:[],dismissed:[]};
+    if(status!==current&&!transitions[current]?.includes(status))return response(409,{error:'invalid_growth_priority_transition',current,status});
+    if(status===current)return response(200,{duplicate:true,status:current});
+    const data={status,from:current,note:cleanLongText(body.note,500),draftId:draft.id,updatedAt:new Date().toISOString()};
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.growth_priority_status','growth_priority',$2,$3::jsonb)`,[context.userId,draft.entity_id,JSON.stringify(data)]);
+    return response(200,{status,from:current});
   }
 
   if(method==='POST'&&url==='/api/v1/marketing/growth-priority-drafts'){
