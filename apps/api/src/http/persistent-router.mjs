@@ -18,6 +18,7 @@ import { scanMarketingRecommendations, updateMarketingRecommendation } from '../
 import { scanFinanceAnomalies, updateFinanceAnomaly } from '../ai/finance.mjs';
 import { rateCustomerJob } from '../crm/customer-portal.mjs';
 import { createWooCommerceCatalogClient } from '../integrations/woocommerce-catalog.mjs';
+import { createMarketingChannelSender } from '../integrations/marketing-channel-sender.mjs';
 import { disablePushSubscription, getNotificationSettings, savePushSubscription, updateNotificationSettings } from '../notifications/push.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
@@ -187,6 +188,16 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     if (!range) return response(400, { error: 'invalid_date_range' });
     const report = await createRepositories(db).reports.profitability(range.from, range.to, context.tenantId||null);
     return response(200, { ...report, range });
+  }
+
+  if (method === 'GET' && url === '/api/v1/marketing/channels/status') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const sender=createMarketingChannelSender();
+    return response(200,{channels:{
+      push:{configured:Boolean(process.env.PUSH_PROVIDER_URL&&process.env.PUSH_PROVIDER_API_KEY)},
+      whatsapp:{configured:sender.whatsappConfigured},
+      email:{configured:sender.emailConfigured}
+    }});
   }
 
   if (method === 'GET' && url === '/api/v1/marketing/store/intelligence') {
