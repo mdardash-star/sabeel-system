@@ -7,7 +7,7 @@ import { createInventoryItem, issueInventoryToTechnician, receiveInventory, tran
 import { approvePurchaseOrder, createPurchaseOrder, createSupplier, receivePurchaseOrder } from '../purchasing/operations.mjs';
 import { createCampaign, createSegment, launchCampaign, previewAudience } from '../marketing/operations.mjs';
 import { markCartRecovered, runAbandonedCartRecovery, upsertAbandonedCart } from '../marketing/abandoned-carts.mjs';
-import { createContent, transitionContent } from '../marketing/content.mjs';
+import { createContent, transitionContent, publishContentExternally } from '../marketing/content.mjs';
 import { attributeOrder, recordSpend, recordTouch } from '../marketing/attribution.mjs';
 import { ingestConversationMessage, replyToConversation, updateConversation } from '../marketing/conversations.mjs';
 import { createCareSuggestion, createKnowledgeArticle, reviewSuggestion, useSuggestion } from '../ai/copilot.mjs';
@@ -19,6 +19,7 @@ import { scanFinanceAnomalies, updateFinanceAnomaly } from '../ai/finance.mjs';
 import { rateCustomerJob } from '../crm/customer-portal.mjs';
 import { createWooCommerceCatalogClient } from '../integrations/woocommerce-catalog.mjs';
 import { createMarketingChannelSender } from '../integrations/marketing-channel-sender.mjs';
+import { createWordPressPublisher } from '../integrations/wordpress-publisher.mjs';
 import { disablePushSubscription, getNotificationSettings, savePushSubscription, updateNotificationSettings } from '../notifications/push.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
@@ -198,6 +199,21 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       whatsapp:{configured:sender.whatsappConfigured},
       email:{configured:sender.emailConfigured}
     }});
+  }
+
+  const publishContentMatch=url.match(/^\/api\/v1\/marketing\/content\/([^/]+)\/publish-wordpress$/);
+  if (method === 'POST' && publishContentMatch) {
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const publisher=createWordPressPublisher();
+    if(!publisher.configured)return response(503,{error:'wordpress_publisher_not_configured'});
+    try{
+      const result=await publishContentExternally(db,{contentId:publishContentMatch[1],actorUserId:context.userId,publisher});
+      return result?response(200,result):response(404,{error:'content_not_found'});
+    }catch(error){
+      if(error.message==='Content must be approved before publishing')return response(409,{error:'content_not_approved'});
+      return response(502,{error:'wordpress_publish_failed'});
+    }
   }
 
   const contentIdeaDraftMatch=url.match(/^\/api\/v1\/marketing\/store\/content-ideas\/([^/]+)\/draft$/);
