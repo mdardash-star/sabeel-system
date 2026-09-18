@@ -605,6 +605,40 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{customers:suggestions,segments});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/profit-intelligence'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const summary=(await db.query(`SELECT
+      COUNT(*)::integer AS orders,
+      COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
+      COALESCE(SUM(items.product_cost),0)::numeric(14,2) AS product_cost,
+      COALESCE(SUM(COALESCE(oc.other_costs,0)),0)::numeric(14,2) AS other_costs,
+      COALESCE(SUM(pay.payout),0)::numeric(14,2) AS technician_payout,
+      COALESCE(SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout),0)::numeric(14,2) AS net_profit
+      FROM orders o
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity*unit_cost_snapshot),0) AS product_cost FROM order_items WHERE order_id=o.id)items ON true
+      LEFT JOIN order_costs oc ON oc.order_id=o.id
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(ts.payout_amount)FILTER(WHERE ts.status<>'rejected'),0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id=j.id WHERE j.order_id=o.id)pay ON true
+      WHERE o.paid_at>=now()-interval '90 days'`)).rows[0]||{};
+    const products=(await db.query(`SELECT oi.product_id,oi.product_name,
+      SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
+      SUM(oi.quantity*oi.unit_cost_snapshot)::numeric(14,2) AS product_cost,
+      SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot))::numeric(14,2) AS gross_profit
+      FROM order_items oi JOIN orders o ON o.id=oi.order_id
+      WHERE o.paid_at>=now()-interval '90 days'
+      GROUP BY oi.product_id,oi.product_name
+      ORDER BY gross_profit DESC LIMIT 20`)).rows;
+    const revenue=Number(summary.revenue||0),profit=Number(summary.net_profit||0),margin=revenue?profit/revenue*100:0;
+    const dailyProfit90=profit/90,dailyProfit30=Number((await db.query(`SELECT COALESCE(SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout),0)::numeric(14,2) AS net_profit
+      FROM orders o
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity*unit_cost_snapshot),0) AS product_cost FROM order_items WHERE order_id=o.id)items ON true
+      LEFT JOIN order_costs oc ON oc.order_id=o.id
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(ts.payout_amount)FILTER(WHERE ts.status<>'rejected'),0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id=j.id WHERE j.order_id=o.id)pay ON true
+      WHERE o.paid_at>=now()-interval '30 days'`)).rows[0]?.net_profit||0)/30;
+    const blended=(dailyProfit30*0.65)+(dailyProfit90*0.35);
+    const risks=products.filter(x=>Number(x.revenue)>0&&Number(x.gross_profit)/Number(x.revenue)*100<15).slice(0,5).map(x=>({productId:x.product_id,name:x.product_name,margin:Number(x.gross_profit)/Number(x.revenue)*100}));
+    return response(200,{summary:{...summary,margin},forecast:{days30:blended*30,days90:blended*90},products,risks});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/revenue-forecast'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const [r30,r90,topCustomer,topProduct,total90]=await Promise.all([
