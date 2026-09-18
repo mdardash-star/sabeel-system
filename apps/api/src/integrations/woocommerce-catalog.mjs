@@ -26,6 +26,27 @@ export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_
       return rows.map(mapProduct);
     },
     async getProduct(id){return mapProduct(await request(`/products/${encodeURIComponent(id)}`));},
+    async getRawProduct(id){return request(`/products/${encodeURIComponent(id)}`);},
+    async suggestSeoPatch(id){
+      const raw=await this.getRawProduct(id),product=mapProduct(raw),issues=[];
+      if(product.name.length<18)issues.push('title_too_short');
+      if(product.name.length>80)issues.push('title_too_long');
+      if(!product.shortDescription||product.shortDescription.length<80)issues.push('short_description_weak');
+      if(!product.imageAlt)issues.push('image_alt_missing');
+      const category=product.categories?.[0]?.name||'منتجات المياه';
+      const cleanName=product.name.replace(/\s+/g,' ').trim();
+      const proposedName=cleanName.length<18?`${cleanName} – ${category}`:cleanName.length>80?cleanName.slice(0,77).trim()+'…':cleanName;
+      const shortDescription=product.shortDescription&&product.shortDescription.length>=80?null:`<p><strong>${escapeHtml(proposedName)}</strong> من منتجات سبيل ضمن فئة ${escapeHtml(category)}. صُمم للاستخدام المناسب حسب مواصفات المنتج ونطاق التركيب، مع توفر خدمات الدعم والصيانة من سبيل.</p>`;
+      return {product,issues,patch:{name:proposedName,...(shortDescription?{shortDescription}:{}),imageAlt:!product.imageAlt?proposedName:null}};
+    },
+    async applySafeSeoPatch(id){
+      const suggestion=await this.suggestSeoPatch(id),safe={};
+      if(suggestion.patch.name&&suggestion.patch.name!==suggestion.product.name)safe.name=suggestion.patch.name;
+      if(suggestion.patch.shortDescription)safe.short_description=suggestion.patch.shortDescription;
+      if(!Object.keys(safe).length)return {changed:false,product:suggestion.product,suggestion};
+      const updated=await request(`/products/${encodeURIComponent(id)}`,{method:'PUT',body:safe});
+      return {changed:true,product:mapProduct(updated),suggestion};
+    },
     async updateProduct(id,patch={}){
       const safe={};
       if(typeof patch.name==='string'&&patch.name.trim())safe.name=patch.name.trim().slice(0,180);
@@ -71,6 +92,18 @@ export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_
       const atRiskRows=customerRows.filter(x=>x.orders>=2&&x.lastOrderAt&&new Date(x.lastOrderAt).getTime()<recentCutoff);
       const topCustomers=[...customerRows].sort((a,b)=>b.revenue-a.revenue).slice(0,10);
       const topProducts=[...products].sort((a,b)=>(b.totalSales||0)-(a.totalSales||0)).slice(0,8);
+      const pairMap=new Map();
+      for(const order of paid){
+        const ids=[...new Set((order.lineItems||[]).map(x=>x.productId).filter(Boolean))];
+        for(let i=0;i<ids.length;i++)for(let j=i+1;j<ids.length;j++){
+          const key=[ids[i],ids[j]].sort().join('|');
+          pairMap.set(key,(pairMap.get(key)||0)+1);
+        }
+      }
+      const productById=new Map(products.map(p=>[p.id,p]));
+      const crossSellPairs=[...pairMap.entries()].map(([key,count])=>{
+        const [a,b]=key.split('|');return {a:productById.get(a)||{id:a,name:a},b:productById.get(b)||{id:b,name:b},orders:count};
+      }).sort((x,y)=>y.orders-x.orders).slice(0,10);
       const seoOpportunities=products.map(product=>{
         const issues=[];
         if(product.name.length<18)issues.push('title_too_short');
@@ -93,7 +126,7 @@ export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_
         snapshotAt:new Date().toISOString(),
         orders:{sample:orders.length,paid:paid.length,revenue,aov},
         customers:{sample:customers.length,repeatCustomers,highValueCustomers,vipCustomers,dormant90d:dormantRows.length,atRisk:atRiskRows.length,topCustomers},
-        products:{sample:products.length,topProducts,seo:seoSummary}
+        products:{sample:products.length,topProducts,seo:seoSummary,crossSellPairs}
       };
     }
   };
@@ -109,3 +142,5 @@ function mapOrder(o){
 function mapCustomer(x){
   return {id:String(x.id),email:String(x.email||''),firstName:String(x.first_name||''),lastName:String(x.last_name||''),name:[x.first_name,x.last_name].filter(Boolean).join(' ').trim(),ordersCount:Number(x.orders_count||0),totalSpent:Number(x.total_spent||0),lastOrderAt:x.date_modified_gmt||x.date_modified||null,billingPhone:String(x.billing?.phone||'')};
 }
+
+function escapeHtml(value){return String(value||'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));}
