@@ -605,6 +605,31 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{customers:suggestions,segments});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/profit-decisions'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const products=(await db.query(`SELECT oi.product_id,oi.product_name,
+      SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
+      SUM(oi.quantity*oi.unit_cost_snapshot)::numeric(14,2) AS cost,
+      SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot))::numeric(14,2) AS gross_profit,
+      COUNT(DISTINCT oi.order_id)::integer AS orders
+      FROM order_items oi JOIN orders o ON o.id=oi.order_id
+      WHERE o.paid_at>=now()-interval '90 days'
+      GROUP BY oi.product_id,oi.product_name`)).rows;
+    const decisions=products.map(x=>{
+      const revenue=Number(x.revenue||0),profit=Number(x.gross_profit||0),margin=revenue?profit/revenue*100:0;
+      let action='monitor',priority='low',reason='الهامش والحجم لا يتطلبان إجراء خاصًا.';
+      if(margin>=35&&Number(x.orders)>=3){action='push_cross_sell';priority='high';reason='هامش قوي مع طلب متكرر؛ مناسب لتعزيز Cross-sell وUpsell.';}
+      else if(margin<15&&revenue>0){action='review_before_spend';priority='high';reason='هامش منخفض؛ يفضل مراجعة التكلفة/السعر قبل زيادة الإنفاق أو الخصومات.';}
+      else if(margin>=25&&Number(x.orders)>=2){action='feature_in_bundles';priority='medium';reason='هامش جيد؛ مناسب للباقات والمنتج التالي المقترح.';}
+      return{productId:String(x.product_id||''),name:x.product_name,revenue,profit,margin,orders:Number(x.orders||0),action,priority,reason};
+    }).sort((a,b)=>({high:0,medium:1,low:2}[a.priority]-({high:0,medium:1,low:2}[b.priority]))||b.profit-a.profit);
+    return response(200,{decisions,summary:{
+      pushCrossSell:decisions.filter(x=>x.action==='push_cross_sell').length,
+      reviewBeforeSpend:decisions.filter(x=>x.action==='review_before_spend').length,
+      featureInBundles:decisions.filter(x=>x.action==='feature_in_bundles').length
+    }});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/profit-intelligence'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const summary=(await db.query(`SELECT
