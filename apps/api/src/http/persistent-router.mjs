@@ -200,6 +200,52 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/cost-repair-queue'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT oi.product_id,oi.product_name,
+      COUNT(*)::integer AS lines,
+      COUNT(DISTINCT o.id)::integer AS orders,
+      COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS affected_revenue
+      FROM orders o JOIN order_items oi ON oi.order_id=o.id
+      WHERE o.paid_at>=now()-interval '90 days' AND COALESCE(oi.unit_cost_snapshot,0)<=0
+      GROUP BY oi.product_id,oi.product_name
+      ORDER BY affected_revenue DESC LIMIT 50`)).rows;
+    const queue=[];
+    for(const row of rows){
+      const key=String(row.product_id||row.product_name||'unknown');
+      const latest=(await db.query(`SELECT data->>'status' AS status,created_at FROM audit_log
+        WHERE action='ai.cost_repair_status' AND entity_type='product_cost' AND entity_id=$1
+        ORDER BY created_at DESC LIMIT 1`,[key])).rows[0]||null;
+      queue.push({...row,status:latest?.status||'open',statusUpdatedAt:latest?.created_at||null});
+    }
+    return response(200,{queue,summary:{
+      total:queue.length,
+      open:queue.filter(x=>x.status==='open').length,
+      reviewing:queue.filter(x=>x.status==='reviewing').length,
+      resolved:queue.filter(x=>x.status==='resolved').length,
+      dismissed:queue.filter(x=>x.status==='dismissed').length
+    }});
+  }
+
+  const costRepairStatusMatch=url.match(/^\/api\/v1\/marketing\/cost-repair\/([^/]+)\/status$/);
+  if(method==='POST'&&costRepairStatusMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const status=cleanOptional(body.status),allowed=['open','reviewing','resolved','dismissed'];
+    if(!allowed.includes(status))return response(400,{error:'invalid_cost_repair_status'});
+    const key=decodeURIComponent(costRepairStatusMatch[1]);
+    const current=(await db.query(`SELECT data->>'status' AS status FROM audit_log
+      WHERE action='ai.cost_repair_status' AND entity_type='product_cost' AND entity_id=$1
+      ORDER BY created_at DESC LIMIT 1`,[key])).rows[0]?.status||'open';
+    const transitions={open:['reviewing','dismissed'],reviewing:['resolved','dismissed'],resolved:[],dismissed:[]};
+    if(status!==current&&!transitions[current]?.includes(status))return response(409,{error:'invalid_cost_repair_transition',current,status});
+    if(status===current)return response(200,{duplicate:true,status:current});
+    const data={status,from:current,note:cleanLongText(body.note,500),updatedAt:new Date().toISOString()};
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)
+      VALUES($1,'ai.cost_repair_status','product_cost',$2,$3::jsonb)`,[context.userId,key,JSON.stringify(data)]);
+    return response(200,{status,from:current});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/profit-data-coverage'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const [summary,products]=await Promise.all([
