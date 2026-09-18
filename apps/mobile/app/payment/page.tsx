@@ -5,7 +5,7 @@ import {useRouter} from "next/navigation";
 
 function requiresDirectNavigation(url:string){
   const value=url.toLowerCase();
-  return value.includes("tap.company")||value.includes("tap-payments")||value.includes("amwal")||value.includes("amwalpay");
+  return value.includes("tabby")||value.includes("tamara");
 }
 
 export default function PaymentPage(){

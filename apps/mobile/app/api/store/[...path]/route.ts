@@ -11,7 +11,7 @@ const allowed=[
 ];
 
 function safePath(parts:string[]){const path=parts.join("/");return allowed.some(rule=>rule.test(path))?path:null}
-function paymentMode(method:string){const value=(method||"").toLowerCase();return value.includes("tap")||value.includes("amwal")?"direct":"embedded"}
+function paymentMode(method:string){const value=(method||"").toLowerCase();return value.includes("tabby")||value.includes("tamara")?"direct":"embedded"}
 
 async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}>}){
   const {path:parts}=await context.params;
@@ -42,6 +42,7 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
 
   const contentType=upstreamResponse.headers.get("content-type")||"application/json";
   const raw=await upstreamResponse.text();
+  if(path==="checkout"&&!upstreamResponse.ok){console.error(JSON.stringify({event:"subil.checkout_error",status:upstreamResponse.status,method:selectedPaymentMethod,body:raw.slice(0,2000)}));}
   let output=raw;
   let paymentTarget="";
   let mode="embedded";
@@ -63,6 +64,10 @@ async function proxy(request:NextRequest,context:{params:Promise<{path:string[]}
   }
 
   const response=new NextResponse(output,{status:upstreamResponse.status,headers:{"content-type":contentType,"cache-control":"no-store"}});
+  if(path==="checkout"&&upstreamResponse.status===409){
+    response.cookies.set("subil_woo_cart_token","",{httpOnly:true,secure:true,sameSite:"lax",path:"/",maxAge:0});
+    response.cookies.set("subil_woo_nonce","",{httpOnly:true,secure:true,sameSite:"lax",path:"/",maxAge:0});
+  }
   const nextToken=upstreamResponse.headers.get("Cart-Token");
   const nextNonce=upstreamResponse.headers.get("Nonce");
   const cookieOptions={httpOnly:true,secure:true,sameSite:"lax" as const,path:"/",maxAge:60*60*24*7};
