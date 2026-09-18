@@ -652,6 +652,62 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     }});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/channel-decisions'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const channels=(await db.query(`WITH order_profit AS(
+      SELECT o.id,o.total_ex_vat,(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS net_profit
+      FROM orders o
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity*unit_cost_snapshot),0) AS product_cost FROM order_items WHERE order_id=o.id)items ON true
+      LEFT JOIN order_costs oc ON oc.order_id=o.id
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(ts.payout_amount)FILTER(WHERE ts.status<>'rejected'),0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id=j.id WHERE j.order_id=o.id)pay ON true
+      WHERE o.paid_at>=now()-interval '90 days'
+    ), attributed AS(
+      SELECT op.id,op.total_ex_vat,op.net_profit,COALESCE(NULLIF(mt.source,''),'(direct)') AS source
+      FROM order_profit op LEFT JOIN order_attribution oa ON oa.order_id=op.id LEFT JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+    ), spend AS(
+      SELECT source,COALESCE(SUM(amount),0)::numeric(14,2) AS spend FROM marketing_spend WHERE spent_on>=current_date-interval '90 days' GROUP BY source
+    )
+    SELECT a.source,COUNT(DISTINCT a.id)::integer AS orders,COALESCE(SUM(a.total_ex_vat),0)::numeric(14,2) AS revenue,
+      COALESCE(SUM(a.net_profit),0)::numeric(14,2) AS profit,COALESCE(MAX(s.spend),0)::numeric(14,2) AS spend
+    FROM attributed a LEFT JOIN spend s ON s.source=a.source GROUP BY a.source`)).rows;
+    const decisions=channels.map(x=>{
+      const revenue=Number(x.revenue||0),profit=Number(x.profit||0),spend=Number(x.spend||0),margin=revenue?profit/revenue*100:0,profitRoas=spend>0?profit/spend:null;
+      let action='monitor',priority='low',reason='لا توجد إشارة قوية تستدعي إجراء خاصًا.';
+      if(x.source==='(direct)'){action='fix_attribution';priority='medium';reason='نسبة كبيرة من الطلبات منسوبة Direct؛ تحسين UTM والإسناد سيعطي رؤية أدق.';}
+      else if(spend>0&&profitRoas!=null&&profitRoas<1){action='review_spend';priority='high';reason='الربح المنسوب أقل من الإنفاق المسجل؛ راجع القناة قبل زيادة الميزانية.';}
+      else if(profit>0&&margin>=25&&Number(x.orders)>=3){action='scale_focus';priority='high';reason='القناة تحقق ربحًا وهامشًا جيدًا مع حجم طلبات مناسب؛ تستحق مزيدًا من التركيز.';}
+      else if(revenue>0&&margin<15){action='optimize_offer';priority='medium';reason='القناة تجلب إيرادًا لكن الهامش منخفض؛ راجع العرض والمنتج قبل التوسع.';}
+      return{source:x.source,orders:Number(x.orders||0),revenue,profit,margin,spend,profitRoas,action,priority,reason};
+    }).sort((a,b)=>({high:0,medium:1,low:2}[a.priority]-({high:0,medium:1,low:2}[b.priority]))||b.profit-a.profit);
+    return response(200,{decisions,summary:{
+      scaleFocus:decisions.filter(x=>x.action==='scale_focus').length,
+      reviewSpend:decisions.filter(x=>x.action==='review_spend').length,
+      fixAttribution:decisions.filter(x=>x.action==='fix_attribution').length,
+      optimizeOffer:decisions.filter(x=>x.action==='optimize_offer').length
+    }});
+  }
+
+  const channelDraftMatch=url.match(/^\/api\/v1\/marketing\/channels\/([^/]+)\/decision-draft$/);
+  if(method==='POST'&&channelDraftMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const source=decodeURIComponent(channelDraftMatch[1]),action=cleanOptional(body.action),reason=cleanLongText(body.reason,500);
+    const allowed=['scale_focus','review_spend','fix_attribution','optimize_offer','monitor'];
+    if(!allowed.includes(action))return response(400,{error:'invalid_channel_action'});
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.channel_decision_draft' AND entity_type='marketing_channel' AND entity_id=$1 AND data->>'action'=$2 AND created_at>=now()-interval '30 days' LIMIT 1`,[source,action])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.channel_decision_draft','marketing_channel',$2,$3::jsonb)`,[context.userId,source,JSON.stringify({action,reason,status:'draft',createdAt:new Date().toISOString()})]);
+    return response(201,{draft:{source,action,reason,status:'draft'}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/channel-decisions/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT al.id,al.entity_id AS source,al.data->>'action' AS action,al.created_at,
+      COALESCE((SELECT SUM(o.total_ex_vat) FROM orders o JOIN order_attribution oa ON oa.order_id=o.id JOIN marketing_touches mt ON mt.id=oa.last_touch_id WHERE COALESCE(NULLIF(mt.source,''),'(direct)')=al.entity_id AND o.paid_at>al.created_at),0)::numeric(14,2) AS revenue_after
+      FROM audit_log al WHERE al.action='ai.channel_decision_draft' ORDER BY al.created_at DESC LIMIT 100`)).rows;
+    return response(200,{items:rows,summary:{drafts:rows.length,withRevenue:rows.filter(x=>Number(x.revenue_after)>0).length,revenueAfter:rows.reduce((s,x)=>s+Number(x.revenue_after||0),0)}});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/channel-profitability'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const channels=(await db.query(`WITH order_profit AS(
