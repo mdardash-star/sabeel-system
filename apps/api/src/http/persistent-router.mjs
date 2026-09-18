@@ -468,6 +468,26 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,await scanMarketingAlerts(db,{actorUserId:context.userId,organizationId:context.tenantId||undefined}));
   }
 
+  const nextBestDraftMatch=url.match(/^\/api\/v1\/marketing\/customers\/([^/]+)\/next-best-action-draft$/);
+  if(method==='POST'&&nextBestDraftMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const customerId=nextBestDraftMatch[1],productId=cleanOptional(body.productId),productName=cleanLongText(body.productName,200);
+    if(!productId||!productName)return response(400,{error:'invalid_next_best_product'});
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.next_best_action_draft' AND entity_type='customer' AND entity_id=$1 AND data->>'productId'=$2 AND created_at>=now()-interval '30 days' LIMIT 1`,[customerId,productId])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.next_best_action_draft','customer',$2,$3::jsonb)`,[context.userId,customerId,JSON.stringify({productId,productName,status:'draft',createdAt:new Date().toISOString()})]);
+    return response(201,{draft:{customerId,productId,productName,status:'draft'}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/next-best-action/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT al.id,al.entity_id AS customer_id,al.data->>'productId' AS product_id,al.data->>'productName' AS product_name,al.created_at,
+      EXISTS(SELECT 1 FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE o.customer_id::text=al.entity_id AND oi.product_id::text=al.data->>'productId' AND o.paid_at>al.created_at) AS converted
+      FROM audit_log al WHERE al.action='ai.next_best_action_draft' ORDER BY al.created_at DESC LIMIT 100`)).rows;
+    return response(200,{items:rows,summary:{drafts:rows.length,converted:rows.filter(x=>x.converted).length}});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/customer-360'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const customers=(await db.query(`WITH base AS(
