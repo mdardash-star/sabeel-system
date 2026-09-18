@@ -200,6 +200,31 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='POST'&&url==='/api/v1/marketing/attribution-repair/bulk'){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const limit=Math.min(10,Math.max(1,Number(body.limit||10)));
+    if(!Number.isInteger(limit))return response(400,{error:'invalid_bulk_limit'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    const queue=(await db.query(`SELECT o.id,o.external_order_id FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id
+      WHERE o.external_source='woocommerce' AND oa.order_id IS NULL
+      ORDER BY o.total_ex_vat DESC NULLS LAST,o.paid_at ASC NULLS LAST LIMIT $1`,[limit])).rows;
+    const summary={requested:limit,processed:0,repaired:0,noUtm:0,failed:0};
+    for(const internal of queue){
+      summary.processed++;
+      try{
+        const raw=await woo.getRawOrder(internal.external_order_id);
+        const before=(await db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution WHERE order_id=$1`,[internal.id])).rows[0]?.total||0;
+        await persistPaidServiceOrder(db,raw,{organizationId:context.tenantId||undefined});
+        const after=(await db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution WHERE order_id=$1`,[internal.id])).rows[0]?.total||0;
+        if(Number(after)>Number(before))summary.repaired++;else summary.noUtm++;
+      }catch(error){summary.failed++;}
+    }
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'woocommerce.attribution_bulk_recheck','woocommerce','orders',$2::jsonb)`,[context.userId,JSON.stringify(summary)]);
+    return response(200,{summary});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/attribution-repair-queue'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const rows=(await db.query(`SELECT o.id,o.external_order_id,o.paid_at,o.total_ex_vat,
