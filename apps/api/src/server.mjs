@@ -164,7 +164,7 @@ function isPersistentRoute(method, pathname) {
       ['/api/v1/marketing/stats','/api/v1/marketing/segments','/api/v1/marketing/campaigns','/api/v1/marketing/audience-preview','/api/v1/marketing/channels/status','/api/v1/marketing/store/products','/api/v1/marketing/store/intelligence','/api/v1/marketing/store/orders','/api/v1/marketing/store/customers','/api/v1/marketing/store/content-ideas','/api/v1/marketing/wordpress/status','/api/v1/marketing/store/commerce-analytics'].includes(pathname) ||
       ['/api/v1/marketing/abandoned-carts','/api/v1/marketing/abandoned-carts/stats'].includes(pathname) ||
       ['/api/v1/marketing/content','/api/v1/marketing/content/stats','/api/v1/marketing/content/performance'].includes(pathname) ||
-      ['/api/v1/marketing/attribution','/api/v1/marketing/content-attribution','/api/v1/marketing/revenue-intelligence'].includes(pathname) ||
+      ['/api/v1/marketing/attribution','/api/v1/marketing/content-attribution','/api/v1/marketing/revenue-intelligence','/api/v1/marketing/executive-brief-live'].includes(pathname) ||
       ['/api/v1/conversations','/api/v1/conversations/stats'].includes(pathname) || /^\/api\/v1\/conversations\/[^/]+$/.test(pathname) ||
       ['/api/v1/ai/stats','/api/v1/ai/suggestions','/api/v1/ai/knowledge'].includes(pathname) ||
       ['/api/v1/ai/insights/stats','/api/v1/ai/insights','/api/v1/ai/brief'].includes(pathname) ||
