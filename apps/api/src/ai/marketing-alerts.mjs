@@ -25,7 +25,14 @@ export async function scanMarketingAlerts(db,{actorUserId=null,organizationId=DE
   if(store?.products?.seo?.opportunities?.length){
     const target=store.products.seo.opportunities.find(x=>Array.isArray(x.issues)&&x.issues.length>0);
     if(target&&woo.configured){
-      try{const result=await woo.applySafeSeoPatch(target.id);safeActions.push({type:'seo_apply',productId:target.id,changed:Boolean(result.changed)});}catch{}
+      try{
+        const recent=(await c.query(`SELECT 1 FROM audit_log WHERE action='ai.autopilot_seo_apply' AND entity_type='woocommerce_product' AND entity_id=$1 AND created_at>=now()-interval '24 hours' LIMIT 1`,[String(target.id)])).rows[0];
+        if(!recent){
+          const result=await woo.applySafeSeoPatch(target.id);
+          safeActions.push({type:'seo_apply',productId:target.id,changed:Boolean(result.changed),reason:'highest_seo_priority'});
+          await c.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.autopilot_seo_apply','woocommerce_product',$2,$3::jsonb)`,[actorUserId,String(target.id),JSON.stringify({changed:Boolean(result.changed),issues:target.issues,scoreBefore:target.score,reason:'highest_seo_priority'})]);
+        }
+      }catch{}
     }
   }
   if(atRisk>0){
@@ -38,7 +45,8 @@ export async function scanMarketingAlerts(db,{actorUserId=null,organizationId=DE
       const recent=(await c.query(`SELECT id FROM marketing_campaigns WHERE organization_id=$1 AND segment_id=$2 AND name='Win-back 90 يوم' AND status IN('draft','scheduled','queued') ORDER BY created_at DESC LIMIT 1`,[organizationId,segmentId])).rows[0];
       if(!recent){
         const campaign=(await c.query(`INSERT INTO marketing_campaigns(organization_id,name,segment_id,channel,message,status,created_by)VALUES($1,'Win-back 90 يوم',$2,'whatsapp','مرحبًا، نود تذكيرك بخدمات الصيانة والمنتجات المناسبة لاستخدامك السابق لدى سبيل. يمكننا مساعدتك في اختيار الخطوة التالية المناسبة.','draft',$3)RETURNING id`,[organizationId,segmentId,actorUserId])).rows[0];
-        safeActions.push({type:'winback_draft',campaignId:campaign.id,segmentId});
+        safeActions.push({type:'winback_draft',campaignId:campaign.id,segmentId,reason:'customers_at_risk'});
+        await c.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.autopilot_winback_draft','marketing_campaign',$2,$3::jsonb)`,[actorUserId,String(campaign.id),JSON.stringify({segmentId,atRisk,reason:'customers_at_risk'})]);
       }
     }catch{}
   }
