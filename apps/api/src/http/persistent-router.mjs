@@ -264,10 +264,14 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const woo=createWooCommerceCatalogClient();
     if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
     const statuses=['processing','completed'],summary={page,perPage,processed:0,created:0,duplicates:0,failed:0,byStatus:{}};
+    const perStatus=Math.max(1,Math.ceil(perPage/statuses.length));
     for(const status of statuses){
-      let orders=[];try{orders=await woo.listRawOrders({page,perPage,status});}catch(error){return response(502,{error:'woocommerce_backfill_fetch_failed',status});}
+      const remaining=perPage-summary.processed;
+      if(remaining<=0){summary.byStatus[status]=0;continue;}
+      const take=Math.min(perStatus,remaining);
+      let orders=[];try{orders=await woo.listRawOrders({page,perPage:take,status});}catch(error){return response(502,{error:'woocommerce_backfill_fetch_failed',status});}
       summary.byStatus[status]=orders.length;
-      for(const order of orders){
+      for(const order of orders.slice(0,remaining)){
         summary.processed++;
         try{
           const result=await persistPaidServiceOrder(db,order,{organizationId:context.tenantId||undefined});
