@@ -1,171 +1,169 @@
 import PreviewAuthGuard from "./preview-auth-guard";
 
-type IconName =
-  | "grid"
-  | "orders"
-  | "customers"
-  | "tech"
-  | "calendar"
-  | "wallet"
-  | "inventory"
-  | "reports"
-  | "settings"
-  | "bell"
-  | "search"
-  | "arrow"
-  | "pin"
-  | "clock"
-  | "check";
-
-function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
-  const paths: Record<IconName, React.ReactNode> = {
-    grid: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
-    orders: <><path d="M6 3h12l2 5-8 4-8-4 2-5Z"/><path d="M4 8v10l8 4 8-4V8M12 12v10"/></>,
-    customers: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></>,
-    tech: <><path d="m14.7 6.3-2.4 2.4 3 3 2.4-2.4a4 4 0 0 0 1.1-4.1l-2.1 2.1-2-2 2.1-2.1a4 4 0 0 0-4.1 1.1L4 13a3 3 0 1 0 4 4l6.7-6.7"/><circle cx="6" cy="15" r="1"/></>,
-    calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></>,
-    wallet: <><rect x="2" y="5" width="20" height="15" rx="3"/><path d="M16 13h6M18 11v4"/></>,
-    inventory: <><path d="M21 8 12 3 3 8l9 5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></>,
-    reports: <><path d="M4 19V9M10 19V5M16 19v-7M22 19V2"/><path d="M2 19h22"/></>,
-    settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 8.97 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.09A1.7 1.7 0 0 0 4.6 8.97a1.7 1.7 0 0 0-.34-1.88L4.2 7.03 7.03 4.2l.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.04V3h4v.09a1.7 1.7 0 0 0 1.03 1.51 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.96 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></>,
-    bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></>,
-    search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
-    arrow: <><path d="m9 18 6-6-6-6"/></>,
-    pin: <><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2"/></>,
-    clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
-    check: <><path d="m5 12 4 4L19 6"/></>,
-  };
-
-  return <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
-}
-
-const navItems: Array<{ label: string; icon: IconName; active?: boolean; badge?: number }> = [
-  { label: "لوحة التحكم", icon: "grid", active: true },
-  { label: "الطلبات والمهام", icon: "orders", badge: 12 },
-  { label: "العملاء", icon: "customers" },
-  { label: "الفنيون", icon: "tech" },
-  { label: "مركز الصيانة", icon: "calendar" },
-  { label: "المالية", icon: "wallet" },
-  { label: "المخزون", icon: "inventory" },
-  { label: "التقارير", icon: "reports" },
-  { label: "CMO / التسويق الذكي", icon: "bell" },
+const nav = [
+  ["الرئيسية","/"],
+  ["الطلبات والمهام","/jobs"],
+  ["العملاء","/customers"],
+  ["مزودو الخدمة","/technicians"],
+  ["مركز الصيانة","/maintenance"],
+  ["المالية","/finance"],
+  ["المخزون والمشتريات","/inventory"],
+  ["التقارير والتحليلات","/reports"],
+  ["CMO / التسويق الذكي","/marketing/growth"],
+  ["الحملات التسويقية","/marketing"],
+  ["مساعدات الذكاء الاصطناعي","/ai"],
+  ["الصلاحيات ومراكز التحكم","/portals"],
 ];
 
-const stats = [
-  { label: "طلبات اليوم", value: "٢٤", change: "+١٢٪", tone: "blue", icon: "orders" as IconName },
-  { label: "مهام قيد التنفيذ", value: "١٢", change: "٥ عاجلة", tone: "amber", icon: "clock" as IconName },
-  { label: "مهام مكتملة", value: "١٨", change: "+٨٪", tone: "green", icon: "check" as IconName },
-  { label: "إيرادات اليوم", value: "٨,٤٥٠", suffix: "ر.س", change: "+١٥٪", tone: "violet", icon: "wallet" as IconName },
+const kpis = [
+  ["إجمالي الطلبات اليوم","٢٤","+١٢٪"],
+  ["قيد التنفيذ","١٢","٥ عاجلة"],
+  ["مكتملة","١٨","+٨٪"],
+  ["متأخرة","٣","تحتاج متابعة"],
+  ["إيرادات اليوم","٨,٤٥٠ ر.س","+١٥٪"],
+  ["متوسط قيمة الطلب","٣٥٢ ر.س","+٦٪"],
+  ["عملاء نشطون","١,٢٥٠","+٤.٢٪"],
+  ["مزودو خدمة متاحون","٩ / ١٢","٧٥٪ إشغال"],
 ];
 
-const jobs = [
-  { id: "#SB-1048", customer: "محمد القحطاني", service: "تركيب جهاز ٧ مراحل", tech: "أحمد سعيد", area: "الياسمين", time: "١٠:٣٠ ص", status: "في الطريق", statusClass: "enroute" },
-  { id: "#SB-1047", customer: "نورة الدوسري", service: "صيانة دورية", tech: "إسلام محمد", area: "الملقا", time: "١١:٠٠ ص", status: "جاري التنفيذ", statusClass: "working" },
-  { id: "#SB-1046", customer: "شركة روافد", service: "تغيير فلاتر جامبو", tech: "حسن علي", area: "السليمانية", time: "١٢:٣٠ م", status: "مجدولة", statusClass: "scheduled" },
-  { id: "#SB-1045", customer: "سعد العتيبي", service: "تنظيف وتعقيم خزان", tech: "رمضان حسن", area: "قرطبة", time: "١:٠٠ م", status: "مكتملة", statusClass: "done" },
+const orderFlow = [
+  ["جديدة",32,100],["مؤكدة",26,82],["مجدولة",21,66],["في الطريق",17,53],["قيد التنفيذ",13,41],["مكتملة",18,57]
 ];
 
-const technicians = [
-  { initials: "أ س", name: "أحمد سعيد", tasks: "٤ مهام", state: "متاح", score: "4.9", color: "avatar-blue" },
-  { initials: "إ م", name: "إسلام محمد", tasks: "٣ مهام", state: "في مهمة", score: "4.8", color: "avatar-green" },
-  { initials: "ح ع", name: "حسن علي", tasks: "٣ مهام", state: "متاح", score: "4.7", color: "avatar-amber" },
-  { initials: "ر ح", name: "رمضان حسن", tasks: "٢ مهمة", state: "في مهمة", score: "4.8", color: "avatar-violet" },
+const providers = [
+  ["أحمد سعيد","٩٦٪","4.9","١٢ مهمة","٢,٨٤٠ ر.س"],
+  ["إسلام محمد","٩٢٪","4.8","١٠ مهام","٢,٤٥٠ ر.س"],
+  ["حسن علي","٨٨٪","4.7","٩ مهام","٢,١٢٠ ر.س"],
+  ["رمضان حسن","٨٥٪","4.8","٨ مهام","١,٩٨٠ ر.س"],
 ];
 
-export default function Dashboard() {
-  return (
-    <PreviewAuthGuard>
-    <main className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark" aria-hidden="true"><span>S</span></div>
-          <div><strong>سبيل</strong><small>نظام التشغيل</small></div>
-        </div>
-        <nav className="nav" aria-label="التنقل الرئيسي">
-          <p className="nav-label">القائمة الرئيسية</p>
-          {navItems.map((item) => (
-            <a className={`nav-item${item.active ? " active" : ""}`} href={item.icon === "orders" ? "/jobs" : item.icon === "customers" ? "/customers" : item.icon === "tech" ? "/technicians" : item.icon === "calendar" ? "/maintenance" : item.icon === "wallet" ? "/finance" : item.icon === "inventory" ? "/inventory" : item.icon === "reports" ? "/reports" : item.icon === "bell" ? "/marketing/growth" : "#"} key={item.label}>
-              <Icon name={item.icon} /><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}
-            </a>
-          ))}
+const customers = [
+  ["عملاء جدد","١٨٧","+٩٪"],
+  ["عملاء متكررون","٤٣٨","+٦٪"],
+  ["VIP","١٢٦","+٣٪"],
+  ["معرضون للفقد","٩٤","Churn ٨٪"],
+  ["صيانة مستحقة 30 يوم","٨٤","فرصة احتفاظ"],
+  ["سلات متروكة","٨","٦,٤٥٠ ر.س"],
+];
+
+const cmo = [
+  ["Competitive Intelligence","الأسعار والعروض والمنافسون"],
+  ["Retention & Loyalty","الصيانة، Win-back، VIP"],
+  ["Brand Reputation","التقييمات والمشاعر والشكاوى"],
+  ["Revenue Intelligence","القنوات والشرائح والربحية"],
+  ["Executive CMO Brief","ملخص يومي للإدارة"],
+  ["SEO & Content","الكلمات، الصفحات، المحتوى"],
+  ["Channel Intelligence","CAC / LTV / ROAS / Attribution"],
+  ["Experiment Lab","اختبارات A/B للنمو"],
+];
+
+const alerts = [
+  ["٣ طلبات متأخرة","تشغيلي","/jobs"],
+  ["٨٤ عميل صيانته مستحقة","احتفاظ","/maintenance"],
+  ["٨ سلات متروكة بقيمة ٦,٤٥٠ ر.س","تسويق","/marketing/abandoned-carts"],
+  ["٤ أصناف تحت حد إعادة الطلب","مخزون","/inventory"],
+  ["مزود خدمة واحد تجاوز الطاقة اليومية","تشغيل","/technicians"],
+];
+
+export default function Dashboard(){
+  return <PreviewAuthGuard>
+    <main className="executive-shell">
+      <aside className="executive-sidebar">
+        <a className="executive-brand" href="/"><span>S</span><div><strong>سبيل</strong><small>Command Center</small></div></a>
+        <p className="executive-nav-title">مركز القيادة</p>
+        <nav className="executive-nav">
+          {nav.map(([label,href],i)=><a className={i===0?"active":""} href={href} key={href}><span>{label}</span><b>›</b></a>)}
         </nav>
-        <div className="sidebar-bottom">
-          <a className="nav-item" href="/portals"><Icon name="settings" /><span>مراكز التحكم والصلاحيات</span></a>
-          <div className="support-card"><span>تحتاج مساعدة؟</span><strong>فريق الدعم معك</strong><button>تواصل معنا</button></div>
-        </div>
+        <a className="executive-cmo-link" href="/marketing/growth"><small>SUBIL AI</small><strong>CMO / التسويق الذكي</strong><span>فتح مركز النمو والتحليل ←</span></a>
       </aside>
 
-      <section className="workspace">
-        <header className="topbar">
-          <div className="mobile-brand"><div className="brand-mark"><span>S</span></div><strong>سبيل</strong></div>
-          <label className="search"><Icon name="search" size={19}/><input aria-label="بحث" placeholder="ابحث عن طلب، عميل أو فني..." /></label>
-          <div className="top-actions">
-            <button className="round-button" aria-label="الإشعارات"><Icon name="bell"/><i /></button>
-            <div className="profile"><div className="profile-copy"><strong>مدير النظام</strong><span>الإدارة العليا</span></div><div className="profile-avatar">م</div></div>
-          </div>
+      <section className="executive-main">
+        <header className="executive-topbar">
+          <div><strong>لوحة القيادة التنفيذية</strong><span>الطلبات · العملاء · مزودو الخدمة · الإيرادات · التسويق</span></div>
+          <div className="executive-top-actions"><a href="/ai/insights">الرؤى الذكية</a><a href="/marketing/growth">CMO</a><div>م</div></div>
         </header>
 
-        <div className="content">
-          <div className="demo-notice"><span>نسخة المعاينة</span> البيانات المعروضة تجريبية ولا تؤثر على متجر سبيل المباشر.</div>
-          <div className="page-head">
-            <div><p>الثلاثاء، ١٥ سبتمبر ٢٠٢٦</p><h1>مرحبًا بك 👋</h1><span>إليك ملخص العمليات في سبيل اليوم</span></div>
-            <button className="primary-button"><span>+</span> إنشاء طلب جديد</button>
-          </div>
-
-          <section className="stats-grid" aria-label="مؤشرات اليوم">
-            {stats.map((stat) => <article className="stat-card" key={stat.label}>
-              <div className={`stat-icon ${stat.tone}`}><Icon name={stat.icon}/></div>
-              <div className="stat-copy"><span>{stat.label}</span><div><strong>{stat.value}</strong>{stat.suffix && <small>{stat.suffix}</small>}</div><em>{stat.change}</em></div>
-            </article>)}
+        <div className="executive-content">
+          <section className="executive-hero">
+            <div><span>SUBIL OS</span><h1>صورة كاملة للنشاط في شاشة واحدة</h1><p>متابعة لحظية لحركة الطلبات، العملاء، مزودي الخدمة، الإيرادات، المخزون والتسويق مع تنبيهات وفرص نمو قابلة للتنفيذ.</p></div>
+            <div className="hero-score"><small>مؤشر صحة التشغيل</small><strong>٩١٪</strong><span>مستقر</span></div>
           </section>
 
-          <section className="dashboard-grid">
-            <article className="panel jobs-panel">
-              <div className="panel-head"><div><h2>مهام اليوم</h2><p>متابعة حالة طلبات التركيب والصيانة</p></div><a href="/jobs">عرض الكل <Icon name="arrow" size={16}/></a></div>
-              <div className="table-wrap"><table>
-                <thead><tr><th>رقم الطلب</th><th>العميل والخدمة</th><th>الفني</th><th>الموقع والموعد</th><th>الحالة</th><th></th></tr></thead>
-                <tbody>{jobs.map((job) => <tr key={job.id}>
-                  <td><strong className="order-id">{job.id}</strong></td>
-                  <td><strong>{job.customer}</strong><small>{job.service}</small></td>
-                  <td>{job.tech}</td>
-                  <td><span className="meta"><Icon name="pin" size={14}/>{job.area}</span><small className="meta"><Icon name="clock" size={14}/>{job.time}</small></td>
-                  <td><span className={`status ${job.statusClass}`}>{job.status}</span></td>
-                  <td><button className="dots" aria-label={`تفاصيل ${job.id}`}>•••</button></td>
-                </tr>)}</tbody>
-              </table></div>
+          <section className="executive-kpis">
+            {kpis.map(([l,v,c])=><article key={l}><span>{l}</span><strong>{v}</strong><small>{c}</small></article>)}
+          </section>
+
+          <section className="executive-grid two">
+            <article className="exec-panel">
+              <header><div><h2>حركة الطلبات</h2><p>مسار الطلب من الإنشاء حتى الإغلاق</p></div><a href="/jobs">كل الطلبات</a></header>
+              <div className="order-funnel">
+                {orderFlow.map(([label,count,width])=><div key={label}><div><span>{label}</span><b>{count}</b></div><i><em style={{width:`${width}%`}} /></i></div>)}
+              </div>
+              <div className="mini-summary"><span>نسبة الإكمال <b>٧٥٪</b></span><span>متوسط زمن التنفيذ <b>٢.٨ ساعة</b></span><span>SLA <b>٩٢٪</b></span></div>
             </article>
 
-            <article className="panel team-panel">
-              <div className="panel-head"><div><h2>الفنيون اليوم</h2><p>حالة الفريق الميداني</p></div><a href="/technicians">عرض الكل</a></div>
-              <div className="team-list">{technicians.map((tech) => <div className="tech-row" key={tech.name}>
-                <div className={`tech-avatar ${tech.color}`}>{tech.initials}</div>
-                <div className="tech-info"><strong>{tech.name}</strong><span>★ {tech.score} · {tech.tasks}</span></div>
-                <span className={`availability ${tech.state === "متاح" ? "available" : "busy"}`}><i />{tech.state}</span>
-              </div>)}</div>
-              <div className="capacity"><div><span>إشغال الفريق</span><strong>٧٥٪</strong></div><div className="progress"><i /></div><p>١٢ من ١٦ فترة عمل محجوزة اليوم</p></div>
+            <article className="exec-panel">
+              <header><div><h2>التنبيهات التنفيذية</h2><p>أهم ما يحتاج تدخل اليوم</p></div><a href="/ai/insights">تحليل أعمق</a></header>
+              <div className="exec-alerts">{alerts.map(([t,tag,href])=><a href={href} key={t}><div><strong>{t}</strong><small>{tag}</small></div><b>←</b></a>)}</div>
             </article>
+          </section>
 
-            <article className="panel chart-panel">
-              <div className="panel-head"><div><h2>أداء الطلبات</h2><p>آخر ٧ أيام</p></div><select aria-label="الفترة"><option>هذا الأسبوع</option></select></div>
-              <div className="chart-summary"><div><span>إجمالي الطلبات</span><strong>١٣٨</strong><em>↑ ١١.٤٪</em></div><div className="legend"><span><i className="legend-blue"/>الطلبات</span><span><i className="legend-green"/>المكتملة</span></div></div>
-              <div className="chart" aria-label="رسم بياني لأداء الطلبات">
-                {[{d:"الأربعاء",a:48,b:35},{d:"الخميس",a:65,b:46},{d:"الجمعة",a:40,b:31},{d:"السبت",a:76,b:58},{d:"الأحد",a:58,b:44},{d:"الاثنين",a:86,b:65},{d:"الثلاثاء",a:72,b:57}].map((bar) => <div className="bar-group" key={bar.d}><div className="bars"><i style={{height:`${bar.a}%`}}/><i style={{height:`${bar.b}%`}}/></div><span>{bar.d}</span></div>)}
+          <section className="executive-grid two">
+            <article className="exec-panel">
+              <header><div><h2>تحليل مزودي الخدمة</h2><p>الإنتاجية، الجودة، الإيراد والطاقة التشغيلية</p></div><a href="/technicians">عرض المزودين</a></header>
+              <div className="provider-table">
+                <div className="provider-head"><span>المزود</span><span>الالتزام</span><span>التقييم</span><span>المهام</span><span>الإيراد</span></div>
+                {providers.map(r=><div key={r[0]}>{r.map((x,i)=><span key={i}>{x}</span>)}</div>)}
               </div>
             </article>
 
-            <article className="panel quick-panel">
-              <div className="panel-head"><div><h2>إجراءات سريعة</h2><p>الوصول المباشر للمهام المتكررة</p></div></div>
-              <div className="quick-grid">
-                <a className="quick-action-link" href="/maintenance"><span className="blue"><Icon name="calendar"/></span><strong>مركز الصيانة</strong><small>متابعة الاستحقاقات</small></a>
-                <a className="quick-action-link" href="/customers"><span className="green"><Icon name="customers"/></span><strong>إضافة عميل</strong><small>تسجيل عميل جديد</small></a>
-                <a className="quick-action-link" href="/finance"><span className="amber"><Icon name="wallet"/></span><strong>اعتماد مستحقات</strong><small>٤ بانتظار الاعتماد</small></a>
-                <a className="quick-action-link" href="/inventory"><span className="violet"><Icon name="inventory"/></span><strong>مركز المخزون</strong><small>الأرصدة والحركات</small></a>
+            <article className="exec-panel">
+              <header><div><h2>تحليل العملاء</h2><p>النمو، الاحتفاظ، القيمة والمخاطر</p></div><a href="/customers">قاعدة العملاء</a></header>
+              <div className="customer-matrix">{customers.map(([l,v,n])=><div key={l}><span>{l}</span><strong>{v}</strong><small>{n}</small></div>)}</div>
+            </article>
+          </section>
+
+          <section className="executive-grid three">
+            <article className="exec-panel revenue-panel">
+              <header><div><h2>الإيرادات والربحية</h2><p>ملخص مالي سريع</p></div><a href="/finance">المالية</a></header>
+              <div className="big-number">١٨٢,٤٥٠ <small>ر.س هذا الشهر</small></div>
+              <div className="metric-row"><span>هامش المساهمة <b>٣٨٪</b></span><span>متوسط الطلب <b>٣٥٢ ر.س</b></span><span>المتوقع 30 يوم <b>٢٢٤ ألف</b></span></div>
+            </article>
+            <article className="exec-panel">
+              <header><div><h2>المخزون</h2><p>حالة التوفر</p></div><a href="/inventory">المخزون</a></header>
+              <div className="stock-health"><strong>٩٤٪</strong><span>توفر الأصناف</span></div>
+              <ul className="simple-list"><li>٤ أصناف تحت الحد</li><li>٢ طلب شراء مفتوح</li><li>١٢ حركة اليوم</li></ul>
+            </article>
+            <article className="exec-panel">
+              <header><div><h2>الصيانة والاستحقاقات</h2><p>فرص الخدمة القادمة</p></div><a href="/maintenance">مركز الصيانة</a></header>
+              <div className="stock-health"><strong>٨٤</strong><span>استحقاق خلال 30 يوم</span></div>
+              <ul className="simple-list"><li>٣٢ هذا الأسبوع</li><li>١٨ عالية القيمة</li><li>١١ بحاجة تأكيد</li></ul>
+            </article>
+          </section>
+
+          <section className="exec-panel cmo-command">
+            <header><div><h2>CMO / مركز النمو والتسويق الذكي</h2><p>كل محركات النمو والتحليل التسويقي في مكان واحد</p></div><a href="/marketing/growth">فتح CMO الكامل</a></header>
+            <div className="cmo-grid">{cmo.map(([t,d])=><a href="/marketing/growth" key={t}><strong>{t}</strong><span>{d}</span><b>←</b></a>)}</div>
+          </section>
+
+          <section className="executive-grid two">
+            <article className="exec-panel">
+              <header><div><h2>القنوات والأداء التسويقي</h2><p>مقارنة العائد حسب القناة</p></div><a href="/marketing/growth">التفاصيل</a></header>
+              <div className="channel-bars">
+                {[["Google","5.8×",88],["WhatsApp","4.9×",75],["Organic","4.6×",71],["Instagram","2.3×",39]].map(([n,v,w])=><div key={n}><span>{n}</span><i><em style={{width:`${w}%`}} /></i><b>{v}</b></div>)}
+              </div>
+            </article>
+            <article className="exec-panel">
+              <header><div><h2>ملخص الإدارة التنفيذي</h2><p>Executive Brief</p></div><a href="/marketing/growth">CMO Brief</a></header>
+              <div className="brief-box">
+                <strong>الأولوية اليوم: الاحتفاظ ورفع قيمة الطلب</strong>
+                <p>أقوى فرصة حالية هي تحويل استحقاقات الصيانة والسلات المتروكة إلى حملات موجهة، مع مراقبة مزود الخدمة الأعلى ضغطًا وتحسين مخزون الأصناف الحرجة.</p>
+                <div><span>فرصة إيراد: <b>+٢١,٤٠٠ ر.س</b></span><span>مخاطر تشغيل: <b>٣</b></span></div>
               </div>
             </article>
           </section>
         </div>
       </section>
     </main>
-    </PreviewAuthGuard>
-  );
+  </PreviewAuthGuard>;
 }
