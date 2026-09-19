@@ -22,6 +22,7 @@ export async function scanMarketingAlerts(db,{actorUserId=null,organizationId=DE
   const warnings=commerceData?.dataQuality?.warnings||[];
   if(warnings.length)alerts.push({fingerprint:'marketing_data_quality',severity:'medium',title:'تحذير جودة بيانات المتجر',summary:`يوجد ${warnings.length} تحذير جودة في بيانات SUBIL Commerce.`,action:'استبعد القيم الشاذة من القرار حتى تصحيح المصدر وراجع الطلبات أو المنتجات المشار إليها.',metrics:{warnings,excludedProducts:commerceData?.dataQuality?.excludedProducts||[]}});
   const safeActions=[];
+  // Autopilot only performs reversible, non-spend actions. External sends remain gated by provider configuration and explicit campaign launch.
   if(store?.products?.seo?.opportunities?.length){
     const target=store.products.seo.opportunities.find(x=>Array.isArray(x.issues)&&x.issues.length>0);
     if(target&&woo.configured){
