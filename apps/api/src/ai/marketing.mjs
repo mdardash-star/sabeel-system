@@ -1,6 +1,11 @@
 import{createWooCommerceCatalogClient}from'../integrations/woocommerce-catalog.mjs';
 import{withTransaction}from'../persistence/transactions.mjs';
 const DEFAULT_ORG='00000000-0000-4000-8000-000000000001';
+export function evaluateRecommendationOutcome({baseline=0,current=0,direction='increase'}={}){
+ const b=Number(baseline||0),n=Number(current||0),delta=n-b,pct=b?delta/Math.abs(b)*100:null;
+ const improved=direction==='decrease'?n<b:n>b;
+ return{baseline:b,current:n,delta:Number(delta.toFixed(2)),changePct:pct===null?null:Number(pct.toFixed(1)),improved};
+}
 
 export function buildMarketingRecommendations(metrics,channels=[],store=null){const list=[],cartValue=Number(metrics.abandoned_value||0),activeCarts=Number(metrics.active_carts||0),failed=Number(metrics.failed_deliveries||0),published=Number(metrics.published_content||0),paid=Number(metrics.paid_orders||0),attributed=Number(metrics.attributed_orders||0),coverage=paid?attributed/paid*100:100;
  if(activeCarts>0)list.push({fingerprint:'cart-recovery',type:'recovery_campaign',priority:cartValue>=5000?'high':'medium',title:'حملة استعادة السلال الأعلى قيمة',rationale:`هناك ${activeCarts} سلة نشطة بقيمة ${cartValue.toFixed(2)} ر.س.`,action:'إنشاء حملة واتساب مخصصة للسلال الأعلى قيمة ثم تشغيلها بعد المراجعة.',impact:`استعادة جزء من ${cartValue.toFixed(2)} ر.س.`,evidence:{activeCarts,cartValue}});
