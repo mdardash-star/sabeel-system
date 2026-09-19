@@ -57,10 +57,11 @@ export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_
     },
     async listCategories(){const rows=await request('/products/categories?hide_empty=true&per_page=100');return rows.map(x=>({id:String(x.id),name:x.name,count:Number(x.count||0)}));},
     async getRawOrder(id){return request(`/orders/${encodeURIComponent(id)}`);},
-    async listRawOrders({page=1,perPage=25,status='any',after=''}={}){
+    async listRawOrders({page=1,perPage=25,status='any',after='',before=''}={}){
       const q=new URLSearchParams({page:String(page),per_page:String(perPage),orderby:'date',order:'desc'});
       if(status&&status!=='any')q.set('status',status);
       if(after)q.set('after',after);
+      if(before)q.set('before',before);
       return request(`/orders?${q.toString()}`);
     },
     async listOrders({page=1,perPage=50,status='any',after=''}={}){
