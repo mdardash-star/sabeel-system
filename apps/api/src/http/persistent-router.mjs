@@ -234,7 +234,7 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
       db.query(`SELECT COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue,
         COALESCE(SUM(oi.subtotal_ex_vat) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)<=0),0)::numeric(14,2) AS affected_revenue
         FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE o.paid_at>=now()-interval '90 days'`),
-      db.query(`SELECT COUNT(*)::integer AS batches,MAX(created_at) AS last_batch_at FROM audit_log WHERE action='woocommerce.backfill_batch'`)
+      db.query(`SELECT COUNT(*)::integer AS batches,MAX(created_at) AS last_batch_at FROM audit_log WHERE action IN('woocommerce.backfill_batch','woocommerce.backfill_auto_batch')`)
     ]);
     const total=Number(orders.rows[0]?.total||0),attributed=Number(attr.rows[0]?.total||0),
       revenue=Number(cost.rows[0]?.revenue||0),affected=Number(cost.rows[0]?.affected_revenue||0);
@@ -677,8 +677,8 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     const [orders,attributed,batches,lastBatch]=await Promise.all([
       db.query(`SELECT COUNT(*)::integer AS total,MIN(paid_at) AS first_paid_at,MAX(paid_at) AS last_paid_at,COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue FROM orders WHERE external_source='woocommerce'`),
       db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution oa JOIN orders o ON o.id=oa.order_id WHERE o.external_source='woocommerce'`),
-      db.query(`SELECT COUNT(*)::integer AS total FROM audit_log WHERE action='woocommerce.backfill_batch'`),
-      db.query(`SELECT created_at,data FROM audit_log WHERE action='woocommerce.backfill_batch' ORDER BY created_at DESC LIMIT 1`)
+      db.query(`SELECT COUNT(*)::integer AS total FROM audit_log WHERE action IN('woocommerce.backfill_batch','woocommerce.backfill_auto_batch')`),
+      db.query(`SELECT created_at,data,action FROM audit_log WHERE action IN('woocommerce.backfill_batch','woocommerce.backfill_auto_batch') ORDER BY created_at DESC LIMIT 1`)
     ]);
     const o=orders.rows[0]||{},a=attributed.rows[0]||{},b=batches.rows[0]||{},last=lastBatch.rows[0]||null,total=Number(o.total||0),attr=Number(a.total||0);
     return response(200,{coverage:{storedOrders:total,attributedOrders:attr,attributionRate:total?attr/total*100:0,revenue:Number(o.revenue||0),firstPaidAt:o.first_paid_at||null,lastPaidAt:o.last_paid_at||null,batches:Number(b.total||0)},lastBatch:last?{createdAt:last.created_at,...last.data}:null});
