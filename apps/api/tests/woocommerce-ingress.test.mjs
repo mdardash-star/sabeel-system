@@ -30,7 +30,7 @@ function fakePool() {
     async query(sql, params = []) {
       calls.push({ sql, params });
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
-      if (/SELECT j\.\*/.test(sql)) return { rows: [] };
+      if (/SELECT \* FROM orders WHERE/.test(sql)) return { rows: [] };
       if (/SELECT c\.\*/.test(sql)) return { rows: [] };
       if (/INSERT INTO customers/.test(sql)) return { rows: [{ id: 'c1', name: 'SUBIL Customer' }] };
       if (/customer_external_identities/.test(sql)) return { rows: [] };
