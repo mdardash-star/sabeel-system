@@ -1,16 +1,17 @@
 function normalizeBase(url){return String(url||'').trim().replace(/\/$/,'');}
 
-export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_BASE_URL,consumerKey=process.env.WOOCOMMERCE_CONSUMER_KEY,consumerSecret=process.env.WOOCOMMERCE_CONSUMER_SECRET,fetchImpl=globalThis.fetch}={}){
+export function createWooCommerceCatalogClient({baseUrl=process.env.WOOCOMMERCE_BASE_URL,consumerKey=process.env.WOOCOMMERCE_CONSUMER_KEY,consumerSecret=process.env.WOOCOMMERCE_CONSUMER_SECRET,username=process.env.WORDPRESS_PUBLISH_USERNAME,appPassword=process.env.WORDPRESS_PUBLISH_APP_PASSWORD,fetchImpl=globalThis.fetch}={}){
   const base=normalizeBase(baseUrl);
-  const configured=Boolean(base&&consumerKey&&consumerSecret&&typeof fetchImpl==='function');
+  const keyAuth=Boolean(consumerKey&&consumerSecret),basicAuth=Boolean(username&&appPassword);
+  const configured=Boolean(base&&(keyAuth||basicAuth)&&typeof fetchImpl==='function');
+  const auth=basicAuth?'Basic '+Buffer.from(`${username}:${appPassword}`).toString('base64'):'';
   async function request(path,{method='GET',body}={}){
     if(!configured)throw new Error('WooCommerce catalog unavailable');
     const url=new URL(`${base}/wp-json/wc/v3${path}`);
-    url.searchParams.set('consumer_key',consumerKey);
-    url.searchParams.set('consumer_secret',consumerSecret);
+    if(keyAuth){url.searchParams.set('consumer_key',consumerKey);url.searchParams.set('consumer_secret',consumerSecret);}
     const response=await fetchImpl(url,{
       method,
-      headers:{accept:'application/json',...(body?{'content-type':'application/json'}:{})},
+      headers:{accept:'application/json',...(basicAuth?{authorization:auth}:{}),...(body?{'content-type':'application/json'}:{})},
       ...(body?{body:JSON.stringify(body)}:{})
     });
     if(!response.ok)throw new Error(`WooCommerce catalog request failed: ${response.status}`);
