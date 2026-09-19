@@ -19,7 +19,9 @@ function fakePool({ duplicate = false } = {}) {
     async query(sql, params = []) {
       calls.push({ sql, params });
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
-      if (/SELECT j\.\*/.test(sql)) return { rows: duplicate ? [{ id: 'job-existing' }] : [] };
+      if (/SELECT \* FROM orders WHERE/.test(sql)) return { rows: duplicate ? [{ id: 'o-existing', customer_id: 'c-existing' }] : [] };
+      if (/UPDATE orders SET paid_at/.test(sql)) return { rows: [{ id: 'o-existing', external_order_id: '9001' }] };
+      if (/SELECT \* FROM service_jobs WHERE order_id/.test(sql)) return { rows: duplicate ? [{ id: 'job-existing' }] : [] };
       if (/SELECT c\.\*/.test(sql)) return { rows: [] };
       if (/INSERT INTO customers/.test(sql)) { customerCreated = true; return { rows: [{ id: 'c1', name: 'Test Customer' }] }; }
       if (/customer_external_identities/.test(sql)) return { rows: [] };
@@ -62,10 +64,13 @@ test('replayed WooCommerce order does not create a second service job', async ()
   assert.equal(f.customerCreated(), false);
 });
 
-test('order without service item creates no service job', async () => {
+test('order without service item is still persisted as a plain paid order with no service job', async () => {
   const f = fakePool();
   const order = { ...paidOrder, line_items: [{ id: 2, name: 'Filter', quantity: 1, meta_data: [] }] };
   const result = await persistPaidServiceOrder(f.pool, order);
   assert.equal(result.serviceRequired, false);
-  assert.equal(f.calls.length, 0);
+  assert.equal(result.job, null);
+  assert.equal(f.customerCreated(), true);
+  assert.ok(f.calls.some(c => /INSERT INTO orders/.test(c.sql)));
+  assert.ok(!f.calls.some(c => /INSERT INTO service_jobs/.test(c.sql)));
 });
