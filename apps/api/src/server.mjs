@@ -298,7 +298,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   let wooBackfillTimer=null;
   if(String(process.env.WOOCOMMERCE_BACKFILL_ENABLED||'').toLowerCase()==='true'){
-    const backfillInterval=Math.max(60000,Number(process.env.WOOCOMMERCE_BACKFILL_INTERVAL_MS||120000));
+    const backfillInterval=Math.max(10000,Number(process.env.WOOCOMMERCE_BACKFILL_INTERVAL_MS||10000));
     const backfillBatchSize=Math.min(25,Math.max(1,Number(process.env.WOOCOMMERCE_BACKFILL_BATCH_SIZE||25)));
     const runBackfill=()=>runWooCommerceBackfillBatch(db,{batchSize:backfillBatchSize})
       .then(r=>{
