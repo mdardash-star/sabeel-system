@@ -1,0 +1,15 @@
+{
+  "currency": "SAR",
+  "vatRate": 0.15,
+  "modes": ["fixed_per_job", "margin_percentage"],
+  "defaultPolicy": {
+    "mode": "margin_percentage",
+    "percentage": 30,
+    "progressionStepPercentagePoints": 5,
+    "maximumPercentage": 50,
+    "performanceWindowMonths": 2,
+    "targetCompletedJobsPerDay": 10
+  },
+  "marginInputs": ["sale_price_ex_vat", "product_cost", "shipping_cost", "installation_cost", "payment_cost", "other_direct_cost"],
+  "audit": ["policy_version", "source_inputs", "calculated_margin", "calculated_payout", "approved_by", "approved_at"]
+}

@@ -1,0 +1,9 @@
+{
+  "mobileCountry": "SA",
+  "otpDigits": 6,
+  "otpTtlSeconds": 300,
+  "resendCooldownSeconds": 60,
+  "maxVerificationAttempts": 5,
+  "roles": ["customer", "technician", "dispatcher", "support", "finance", "branch_manager", "admin", "super_admin"],
+  "principles": ["mobile_is_login_factor", "internal_user_id_is_stable", "provider_is_replaceable", "audit_sensitive_events"]
+}

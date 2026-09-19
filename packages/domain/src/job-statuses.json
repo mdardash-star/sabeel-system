@@ -1,0 +1,10 @@
+{
+  "pending_assignment": ["assigned", "cancelled"],
+  "assigned": ["scheduled", "pending_assignment", "cancelled"],
+  "scheduled": ["en_route", "assigned", "cancelled"],
+  "en_route": ["arrived", "scheduled"],
+  "arrived": ["in_progress"],
+  "in_progress": ["completed"],
+  "completed": [],
+  "cancelled": []
+}

@@ -1,0 +1,91 @@
+name: PostgreSQL Tests
+on:
+  push:
+    branches: [persistence-postgres]
+  pull_request:
+    branches: [develop]
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: subil
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: subil_test
+        ports: ["5432:5432"]
+    env:
+      PGPASSWORD: test_password
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for PostgreSQL
+        run: until pg_isready -h localhost -U subil -d subil_test; do sleep 2; done
+      - name: Apply migrations
+        run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/002_webhook_deliveries.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/003_dispatch_capabilities.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/004_technician_location.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/005_dispatch_scheduling.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/006_completion_finance.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/007_auth_sessions.sql
+      - name: Test core schema
+        run: psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/tests/core-schema.sql
+      - name: Verify dispatch schema
+        run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT required_skill_code, service_duration_minutes FROM service_jobs LIMIT 0;"
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, skill_code FROM technician_skills LIMIT 0;"
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, available_from, available_to FROM technician_availability LIMIT 0;"
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "SELECT technician_id, latitude, longitude, accuracy_meters, captured_at FROM technician_locations LIMIT 0;"
+          DEFAULT_DURATION=$(psql -h localhost -U subil -d subil_test -tAc "SELECT column_default FROM information_schema.columns WHERE table_name='service_jobs' AND column_name='service_duration_minutes';")
+          test "$DEFAULT_DURATION" = "60"
+      - name: Verify service duration constraints
+        run: |
+          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "UPDATE service_jobs SET service_duration_minutes=0;"; then
+            echo "Expected duration constraint to reject zero"
+            exit 1
+          fi
+      - name: Verify completion finance constraints
+        run: |
+          test "$(psql -h localhost -U subil -d subil_test -tAc "SELECT commission_rate FROM compensation_policies WHERE id='initial-margin-30';")" = "0.3000"
+          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO compensation_policies(id,policy_version,mode,commission_rate) VALUES ('invalid','v1','percentage',0.75);"; then
+            echo "Expected commission constraint to reject 0.75"
+            exit 1
+          fi
+      - name: Verify session token hash constraints
+        run: |
+          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO auth_sessions(user_id,token_hash,expires_at) VALUES ('00000000-0000-0000-0000-000000000002','raw-token',now() + interval '1 hour');"; then
+            echo "Expected raw or short session token to be rejected"
+            exit 1
+          fi
+      - name: Verify technician coordinate constraints
+        run: |
+          U=$(psql -h localhost -U subil -d subil_test -tAc "INSERT INTO users(mobile,role) VALUES ('966500000099','technician') RETURNING id;" | head -n1 | tr -d '[:space:]')
+          T=$(psql -h localhost -U subil -d subil_test -tAc "INSERT INTO technicians(user_id,city_id) VALUES ('$U','riyadh') RETURNING id;" | head -n1 | tr -d '[:space:]')
+          test -n "$U"
+          test -n "$T"
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO technician_locations(technician_id,latitude,longitude,captured_at) VALUES ('$T',24.7136,46.6753,now());"
+          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "UPDATE technician_locations SET latitude=100 WHERE technician_id='$T';"; then
+            echo "Expected latitude constraint to reject 100"
+            exit 1
+          fi
+      - name: Verify webhook replay table
+        run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"
+          if psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -c "INSERT INTO webhook_deliveries(provider, delivery_key) VALUES ('woocommerce','woocommerce:webhook:ci-1');"; then exit 1; else exit 0; fi
+      - name: Roll back migrations
+        run: |
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/007_auth_sessions.down.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/006_completion_finance.down.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/005_dispatch_scheduling.down.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/004_technician_location.down.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/003_dispatch_capabilities.down.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/002_webhook_deliveries.down.sql
+          psql -h localhost -U subil -d subil_test -v ON_ERROR_STOP=1 -f apps/api/db/migrations/001_core.down.sql
+      - name: Verify rollback
+        run: |
+          COUNT=$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','customers','service_jobs','technician_settlements','wallet_entries','installed_assets','webhook_deliveries','technician_skills','technician_availability','technician_locations','compensation_policies','order_costs','auth_sessions');")
+          test "$COUNT" = "0"

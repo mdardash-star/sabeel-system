@@ -1,0 +1,76 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { persistPaidServiceOrder } from '../src/integrations/woocommerce-persistence.mjs';
+
+const paidOrder = {
+  id: 9001, status: 'processing', customer_id: 77, total: '575.00',
+  billing: { first_name: 'Test', last_name: 'Customer', email: 'test@example.com', phone: '+966500000001', address_1: 'Riyadh', city: 'Riyadh' },
+  line_items: [{ id: 1, name: 'Aqua Gold', sku: 'RO-7-STAGE', quantity: 1, total: '500.00', meta_data: [
+    { key: '_subil_requires_service', value: 'yes' },
+    { key: '_subil_required_skill', value: 'ro-install' },
+    { key: '_subil_service_duration_minutes', value: '90' }
+  ] }]
+};
+
+function fakePool({ duplicate = false } = {}) {
+  let customerCreated = false;
+  const calls = [];
+  const client = {
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (/SELECT \* FROM orders WHERE/.test(sql)) return { rows: duplicate ? [{ id: 'o-existing', customer_id: 'c-existing' }] : [] };
+      if (/UPDATE orders SET paid_at/.test(sql)) return { rows: [{ id: 'o-existing', external_order_id: '9001' }] };
+      if (/SELECT \* FROM service_jobs WHERE order_id/.test(sql)) return { rows: duplicate ? [{ id: 'job-existing' }] : [] };
+      if (/SELECT c\.\*/.test(sql)) return { rows: [] };
+      if (/INSERT INTO customers/.test(sql)) { customerCreated = true; return { rows: [{ id: 'c1', name: 'Test Customer' }] }; }
+      if (/customer_external_identities/.test(sql)) return { rows: [] };
+      if (/INSERT INTO service_locations/.test(sql)) return { rows: [{ id: 'l1' }] };
+      if (/INSERT INTO orders/.test(sql)) return { rows: [{ id: 'o1', external_order_id: '9001' }] };
+      if (/INSERT INTO order_items/.test(sql)) return { rows: [] };
+      if (/SUM\(quantity \* unit_cost_snapshot\)/.test(sql)) return { rows: [{ product_cost: '320.00' }] };
+      if (/INSERT INTO order_costs/.test(sql)) return { rows: [] };
+      if (/INSERT INTO service_jobs/.test(sql)) return { rows: [{ id: 'j1', status: 'pending_assignment', required_skill_code: params[5], service_duration_minutes: params[6] }] };
+      if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    release() {}
+  };
+  return { pool: { connect: async () => client }, calls, customerCreated: () => customerCreated };
+}
+
+test('paid WooCommerce service order creates customer order pending job and finance snapshot atomically', async () => {
+  const f = fakePool();
+  const result = await persistPaidServiceOrder(f.pool, paidOrder, { cityId: 'riyadh' });
+  assert.equal(result.job.status, 'pending_assignment');
+  assert.equal(result.job.required_skill_code, 'ro-install');
+  assert.equal(result.job.service_duration_minutes, 90);
+  assert.equal(result.duplicate, false);
+  assert.equal(result.productCost, 320);
+  assert.equal(f.customerCreated(), true);
+  assert.ok(f.calls.some(c => /woocommerce\.service_job_created/.test(c.sql)));
+  assert.ok(f.calls.some(c => /INSERT INTO order_items/.test(c.sql) && c.params[1] === '1'));
+  assert.ok(f.calls.some(c => /INSERT INTO order_items/.test(c.sql) && c.params[3] === 'RO-7-STAGE' && c.params[6] === 500));
+  assert.ok(f.calls.some(c => /INSERT INTO order_costs/.test(c.sql) && c.params[1] === 320));
+  assert.ok(f.calls.some(c => /INSERT INTO service_jobs/.test(c.sql) && c.params[5] === 'ro-install' && c.params[6] === 90));
+  assert.ok(f.calls.some(c => c.sql === 'COMMIT'));
+});
+
+test('replayed WooCommerce order does not create a second service job', async () => {
+  const f = fakePool({ duplicate: true });
+  const result = await persistPaidServiceOrder(f.pool, paidOrder);
+  assert.equal(result.duplicate, true);
+  assert.equal(result.job.id, 'job-existing');
+  assert.equal(f.customerCreated(), false);
+});
+
+test('order without service item is still persisted as a plain paid order with no service job', async () => {
+  const f = fakePool();
+  const order = { ...paidOrder, line_items: [{ id: 2, name: 'Filter', quantity: 1, meta_data: [] }] };
+  const result = await persistPaidServiceOrder(f.pool, order);
+  assert.equal(result.serviceRequired, false);
+  assert.equal(result.job, null);
+  assert.equal(f.customerCreated(), true);
+  assert.ok(f.calls.some(c => /INSERT INTO orders/.test(c.sql)));
+  assert.ok(!f.calls.some(c => /INSERT INTO service_jobs/.test(c.sql)));
+});

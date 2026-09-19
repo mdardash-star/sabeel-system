@@ -1,0 +1,3 @@
+BEGIN;
+DROP TABLE IF EXISTS job_escalations;
+COMMIT;

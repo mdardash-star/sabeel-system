@@ -1,0 +1,9 @@
+{
+  "customer": ["id", "mobile", "name", "communication_consents", "created_at", "updated_at"],
+  "serviceLocation": ["id", "customer_id", "city_id", "label", "address", "latitude", "longitude", "access_notes"],
+  "installedAsset": ["id", "customer_id", "service_location_id", "product_id", "serial_number", "installed_at", "warranty_expires_at", "next_maintenance_at"],
+  "technicianView": {
+    "allowed": ["customer_display_name", "service_location", "access_notes", "job_items", "job_notes"],
+    "forbidden": ["customer_mobile", "private_crm_notes", "marketing_consents"]
+  }
+}

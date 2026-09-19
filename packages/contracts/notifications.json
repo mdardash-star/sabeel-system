@@ -1,0 +1,20 @@
+{
+  "channels": ["sms", "whatsapp", "email", "push"],
+  "events": [
+    "identity.otp_requested",
+    "job.scheduled",
+    "job.en_route",
+    "job.arrived",
+    "job.completed",
+    "rating.requested",
+    "maintenance.due",
+    "order.updated"
+  ],
+  "rules": {
+    "providerAdapters": true,
+    "respectCustomerConsent": true,
+    "storeDeliveryStatus": true,
+    "retryTransientFailures": true,
+    "doNotExposeCustomerMobileToTechnician": true
+  }
+}

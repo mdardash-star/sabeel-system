@@ -1,0 +1,23 @@
+export type ServiceJobStatus = 'pending_assignment' | 'assigned' | 'scheduled' | 'en_route' | 'arrived' | 'in_progress' | 'completed' | 'cancelled';
+
+export interface ServiceJob {
+  id: string;
+  orderId: string;
+  customerId: string;
+  cityId: string;
+  technicianId?: string;
+  status: ServiceJobStatus;
+  scheduledAt?: string;
+  completedAt?: string;
+}
+
+export const allowedTransitions: Record<ServiceJobStatus, readonly ServiceJobStatus[]> = {
+  pending_assignment: ['assigned', 'cancelled'],
+  assigned: ['scheduled', 'pending_assignment', 'cancelled'],
+  scheduled: ['en_route', 'assigned', 'cancelled'],
+  en_route: ['arrived', 'scheduled'],
+  arrived: ['in_progress'],
+  in_progress: ['completed'],
+  completed: [],
+  cancelled: []
+};

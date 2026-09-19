@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { routePersistentRequest } from '../src/http/persistent-router.mjs';
+import { createRepositories } from '../src/persistence/repositories.mjs';
+
+test('finance reads a bounded tenant-scoped profitability report',async()=>{let calls=0;const db={query:async(sql,params)=>{calls++;assert.deepEqual(params,['2026-09-01T00:00:00.000Z','2026-10-01T00:00:00.000Z','org-1']);assert.match(sql,/organization_id/);if(/order_count/.test(sql))return{rows:[{order_count:4,revenue:'4000',net_profit:'900'}]};if(/date_trunc/.test(sql))return{rows:[{period:'2026-09-15',revenue:'1000',profit:'250'}]};if(/external_source AS name/.test(sql))return{rows:[{name:'woocommerce',revenue:'4000'}]};if(/city_id/.test(sql)&&/GROUP BY/.test(sql))return{rows:[{name:'riyadh',revenue:'4000'}]};if(/FROM order_items oi/.test(sql))return{rows:[{name:'Aqua Gold',revenue:'2000'}]};return{rows:[{id:'o1',net_profit:'250'}]};}};const result=await routePersistentRequest({method:'GET',url:'/api/v1/reports/profitability',role:'finance',context:{from:'2026-09-01',to:'2026-10-01',tenantId:'org-1'},db});assert.equal(result.status,200);assert.equal(result.data.summary.net_profit,'900');assert.equal(calls,6);});
+
+test('support cannot access profitability data',async()=>{const db={query:async()=>{throw new Error('must not query');}};const result=await routePersistentRequest({method:'GET',url:'/api/v1/reports/profitability',role:'support',db});assert.equal(result.status,403);});
+
+test('profitability rejects inverted or excessive ranges',async()=>{const db={query:async()=>{throw new Error('must not query');}};const inverted=await routePersistentRequest({method:'GET',url:'/api/v1/reports/profitability',role:'finance',context:{from:'2026-10-01',to:'2026-09-01'},db});const excessive=await routePersistentRequest({method:'GET',url:'/api/v1/reports/profitability',role:'finance',context:{from:'2024-01-01',to:'2026-01-01'},db});assert.equal(inverted.status,400);assert.equal(excessive.status,400);});
+
+test('profitability repository snapshots all report dimensions',async()=>{const queries=[];const db={query:async sql=>{queries.push(sql);return{rows:/order_count/.test(sql)?[{order_count:0,revenue:0,net_profit:0}]:[]};}};const result=await createRepositories(db).reports.profitability('2026-09-01','2026-10-01');assert.equal(queries.length,6);assert.ok(queries.some(sql=>/unit_cost_snapshot/.test(sql)));assert.ok(queries.some(sql=>/external_source AS name/.test(sql)));assert.deepEqual(result.products,[]);});

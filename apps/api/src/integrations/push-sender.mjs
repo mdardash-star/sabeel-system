@@ -1,0 +1,3 @@
+export function createPushSender({url=process.env.PUSH_PROVIDER_URL,apiKey=process.env.PUSH_PROVIDER_API_KEY,fetchImpl=globalThis.fetch}={}){
+ return async function sendPush({subscription,notification}){if(!url||!apiKey||typeof fetchImpl!=='function')throw new Error('Push sender unavailable');const response=await fetchImpl(url,{method:'POST',headers:{authorization:`Bearer ${apiKey}`,'content-type':'application/json'},body:JSON.stringify({subscription,notification})});if(!response.ok){const error=new Error(`Push provider rejected request (${response.status})`);error.status=response.status;throw error}const payload=await response.json().catch(()=>({}));return{messageId:payload.messageId||payload.id||null}}
+}

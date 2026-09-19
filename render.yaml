@@ -1,0 +1,77 @@
+services:
+  - type: web
+    name: subil-api
+    runtime: node
+    branch: develop
+    buildCommand: npm ci --include=dev
+    startCommand: npm run migrate --workspace @subil/api && npm run start --workspace @subil/api
+    healthCheckPath: /ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+      - key: DATABASE_POOL_MAX
+        value: "10"
+      - key: DATABASE_IDLE_TIMEOUT_MS
+        value: "30000"
+      - key: DATABASE_CONNECT_TIMEOUT_MS
+        value: "5000"
+      - key: OTP_HASH_SECRET
+        generateValue: true
+      - key: OTP_SENDER_URL
+        sync: false
+      - key: OTP_SENDER_API_KEY
+        sync: false
+      - key: SUBIL_ADMIN_ORIGINS
+        value: "https://subil-admin.onrender.com,https://subil-technician.onrender.com,https://subil-mobile.onrender.com"
+      - key: WOOCOMMERCE_WEBHOOK_SECRET
+        sync: false
+      - key: PUSH_PROVIDER_URL
+        sync: false
+      - key: PUSH_PROVIDER_API_KEY
+        sync: false
+      - key: PUSH_VAPID_PUBLIC_KEY
+        sync: false
+      - key: PUSH_BATCH_SIZE
+        value: "50"
+      - key: PUSH_WORKER_INTERVAL_MS
+        value: "15000"
+
+  - type: web
+    name: subil-admin
+    runtime: node
+    branch: develop
+    buildCommand: npm ci --include=dev && npm run build --workspace @subil/admin
+    startCommand: npm run start --workspace @subil/admin -- -p $PORT
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SUBIL_API_URL
+        value: "https://subil-api.onrender.com"
+
+  - type: web
+    name: subil-technician
+    runtime: node
+    branch: develop
+    buildCommand: npm ci --include=dev && npm run build --workspace @subil/technician
+    startCommand: npm run start --workspace @subil/technician -- -p $PORT
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SUBIL_API_URL
+        value: "https://subil-api.onrender.com"
+
+  - type: web
+    name: subil-mobile
+    runtime: node
+    branch: develop
+    buildCommand: npm ci --include=dev && npm run build --workspace @subil/mobile
+    startCommand: npm run start --workspace @subil/mobile -- -p $PORT
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SUBIL_API_URL
+        value: "https://subil-api.onrender.com"
