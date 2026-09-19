@@ -9,6 +9,13 @@ export function createWordPressPublisher({
  const auth=configured?'Basic '+Buffer.from(`${username}:${appPassword}`).toString('base64'):'';
  return{
   configured,
+  async checkConnection(){
+   if(!configured)throw new Error('WordPress publisher unavailable');
+   const r=await fetchImpl(`${base}/wp-json/wp/v2/users/me?context=edit`,{headers:{authorization:auth,accept:'application/json'}});
+   if(!r.ok)throw new Error(`WordPress auth failed: ${r.status}`);
+   const data=await r.json();
+   return{id:String(data.id||''),name:String(data.name||'')};
+  },
   async publishPost({title,slug,content,excerpt=''}) {
    if(!configured)throw new Error('WordPress publisher unavailable');
    const r=await fetchImpl(`${base}/wp-json/wp/v2/posts`,{method:'POST',headers:{authorization:auth,'content-type':'application/json',accept:'application/json'},body:JSON.stringify({status:'publish',title,slug,content,excerpt})});
