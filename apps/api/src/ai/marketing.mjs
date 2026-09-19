@@ -7,6 +7,12 @@ export function evaluateRecommendationOutcome({baseline=0,current=0,direction='i
  return{baseline:b,current:n,delta:Number(delta.toFixed(2)),changePct:pct===null?null:Number(pct.toFixed(1)),improved};
 }
 
+export function buildMarketingMemoryEntry({recommendationId,type,action,baseline,current,direction='increase',observedAt=new Date().toISOString()}={}){
+ const outcome=evaluateRecommendationOutcome({baseline,current,direction});
+ return{recommendationId:recommendationId||null,type:type||'unknown',action:action||'',direction,outcome,observedAt,
+  lesson:outcome.improved?'repeat_or_scale':'revise_or_stop'};
+}
+
 export function buildMarketingRecommendations(metrics,channels=[],store=null){const list=[],cartValue=Number(metrics.abandoned_value||0),activeCarts=Number(metrics.active_carts||0),failed=Number(metrics.failed_deliveries||0),published=Number(metrics.published_content||0),paid=Number(metrics.paid_orders||0),attributed=Number(metrics.attributed_orders||0),coverage=paid?attributed/paid*100:100;
  if(activeCarts>0)list.push({fingerprint:'cart-recovery',type:'recovery_campaign',priority:cartValue>=5000?'high':'medium',title:'حملة استعادة السلال الأعلى قيمة',rationale:`هناك ${activeCarts} سلة نشطة بقيمة ${cartValue.toFixed(2)} ر.س.`,action:'إنشاء حملة واتساب مخصصة للسلال الأعلى قيمة ثم تشغيلها بعد المراجعة.',impact:`استعادة جزء من ${cartValue.toFixed(2)} ر.س.`,evidence:{activeCarts,cartValue}});
  if(failed>0)list.push({fingerprint:'delivery-quality',type:'delivery_fix',priority:failed>20?'high':'medium',title:'تحسين جودة بيانات الاتصال',rationale:`فشل تسليم ${failed} رسالة خلال 7 أيام.`,action:'مراجعة الأرقام والبريد وحالة المزود قبل إطلاق حملة جديدة.',impact:'رفع معدل الوصول وخفض تكلفة الرسالة المهدرة',evidence:{failedDeliveries:failed}});
