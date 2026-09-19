@@ -200,6 +200,31 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/self-test'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const tests=[];
+    async function check(key,label,fn){try{await fn();tests.push({key,label,ok:true});}catch(error){tests.push({key,label,ok:false,error:String(error?.message||'failed').slice(0,180)});}}
+    await check('database','Database',()=>db.query('SELECT 1'));
+    await check('orders_schema','Orders schema',()=>db.query('SELECT external_source,external_order_id,paid_at,total_ex_vat FROM orders LIMIT 0'));
+    await check('profit_schema','Profit schema',()=>db.query('SELECT payout_amount,status FROM technician_settlements LIMIT 0'));
+    await check('cost_schema','Order costs schema',()=>db.query('SELECT product_cost,other_costs FROM order_costs LIMIT 0'));
+    await check('items_schema','Order items cost schema',()=>db.query('SELECT unit_cost_snapshot,subtotal_ex_vat,quantity FROM order_items LIMIT 0'));
+    await check('attribution_schema','Attribution schema',()=>db.query('SELECT last_touch_id FROM order_attribution LIMIT 0'));
+    await check('touch_schema','Marketing touch schema',()=>db.query('SELECT source,medium,campaign,content FROM marketing_touches LIMIT 0'));
+    const woo=createWooCommerceCatalogClient(),publisher=createWordPressPublisher(),sender=createMarketingChannelSender();
+    tests.push({key:'woocommerce_config',label:'WooCommerce API config',ok:woo.configured});
+    tests.push({key:'webhook_config',label:'WooCommerce Webhook secret',ok:Boolean(process.env.WOOCOMMERCE_WEBHOOK_SECRET)});
+    tests.push({key:'wordpress_config',label:'WordPress Publisher',ok:publisher.configured});
+    tests.push({key:'whatsapp_config',label:'WhatsApp Provider',ok:sender.whatsappConfigured});
+    tests.push({key:'email_config',label:'Email Provider',ok:sender.emailConfigured});
+    tests.push({key:'otp_config',label:'OTP Sender',ok:Boolean(process.env.OTP_SENDER_URL&&process.env.OTP_SENDER_API_KEY)||String(process.env.SUBIL_OTP_TEST_MODE||'').toLowerCase()==='true'});
+    const criticalKeys=new Set(['database','orders_schema','profit_schema','cost_schema','items_schema','attribution_schema','touch_schema','woocommerce_config','webhook_config']);
+    const criticalFailed=tests.filter(x=>criticalKeys.has(x.key)&&!x.ok);
+    return response(200,{status:criticalFailed.length?'failed':'passed',tests,summary:{
+      total:tests.length,passed:tests.filter(x=>x.ok).length,failed:tests.filter(x=>!x.ok).length,criticalFailed:criticalFailed.length
+    }});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/data-readiness-summary'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const woo=createWooCommerceCatalogClient(),publisher=createWordPressPublisher(),sender=createMarketingChannelSender();
