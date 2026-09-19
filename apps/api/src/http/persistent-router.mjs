@@ -7,7 +7,7 @@ import { createInventoryItem, issueInventoryToTechnician, receiveInventory, tran
 import { approvePurchaseOrder, createPurchaseOrder, createSupplier, receivePurchaseOrder } from '../purchasing/operations.mjs';
 import { createCampaign, createSegment, launchCampaign, previewAudience } from '../marketing/operations.mjs';
 import { markCartRecovered, runAbandonedCartRecovery, upsertAbandonedCart } from '../marketing/abandoned-carts.mjs';
-import { createContent, transitionContent } from '../marketing/content.mjs';
+import { createContent, transitionContent, publishContentExternally } from '../marketing/content.mjs';
 import { attributeOrder, recordSpend, recordTouch } from '../marketing/attribution.mjs';
 import { ingestConversationMessage, replyToConversation, updateConversation } from '../marketing/conversations.mjs';
 import { createCareSuggestion, createKnowledgeArticle, reviewSuggestion, useSuggestion } from '../ai/copilot.mjs';
@@ -16,7 +16,13 @@ import { createDispatchRecommendation, reviewDispatchRecommendation } from '../a
 import { scanSalesOpportunities, updateSalesOpportunity } from '../ai/sales.mjs';
 import { scanMarketingRecommendations, updateMarketingRecommendation } from '../ai/marketing.mjs';
 import { scanFinanceAnomalies, updateFinanceAnomaly } from '../ai/finance.mjs';
+import { scanMarketingAlerts } from '../ai/marketing-alerts.mjs';
 import { rateCustomerJob } from '../crm/customer-portal.mjs';
+import { createWooCommerceCatalogClient } from '../integrations/woocommerce-catalog.mjs';
+import { persistPaidServiceOrder } from '../integrations/woocommerce-persistence.mjs';
+import { createMarketingChannelSender } from '../integrations/marketing-channel-sender.mjs';
+import { createWordPressPublisher } from '../integrations/wordpress-publisher.mjs';
+import { createSubilCommerceAnalyticsClient } from '../integrations/subil-commerce-analytics.mjs';
 import { disablePushSubscription, getNotificationSettings, savePushSubscription, updateNotificationSettings } from '../notifications/push.mjs';
 
 export async function routePersistentRequest({ method, url, role, body = {}, context = {}, db }) {
@@ -188,6 +194,586 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200, { ...report, range });
   }
 
+  if (method === 'GET' && url === '/api/v1/marketing/wordpress/status') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const publisher=createWordPressPublisher();
+    return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/data-readiness-summary'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient(),publisher=createWordPressPublisher(),sender=createMarketingChannelSender();
+    const [orders,attr,cost,backfill]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS total,MIN(paid_at) AS first_paid_at,MAX(paid_at) AS last_paid_at FROM orders WHERE external_source='woocommerce'`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution oa JOIN orders o ON o.id=oa.order_id WHERE o.external_source='woocommerce'`),
+      db.query(`SELECT COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue,
+        COALESCE(SUM(oi.subtotal_ex_vat) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)<=0),0)::numeric(14,2) AS affected_revenue
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE o.paid_at>=now()-interval '90 days'`),
+      db.query(`SELECT COUNT(*)::integer AS batches,MAX(created_at) AS last_batch_at FROM audit_log WHERE action='woocommerce.backfill_batch'`)
+    ]);
+    const total=Number(orders.rows[0]?.total||0),attributed=Number(attr.rows[0]?.total||0),
+      revenue=Number(cost.rows[0]?.revenue||0),affected=Number(cost.rows[0]?.affected_revenue||0);
+    const attributionRate=total?attributed/total*100:0,costRate=revenue?(revenue-affected)/revenue*100:100;
+    const historicalScore=total>=500?100:total>=200?80:total>=100?60:total>=25?40:0;
+    const checks=[
+      {key:'historical_orders',label:'Historical Orders',score:historicalScore,ready:historicalScore>=60},
+      {key:'attribution',label:'Attribution Coverage',score:Math.min(100,attributionRate),ready:attributionRate>=70},
+      {key:'costs',label:'Cost Coverage',score:Math.min(100,costRate),ready:costRate>=90},
+      {key:'woocommerce',label:'WooCommerce API',score:woo.configured?100:0,ready:woo.configured},
+      {key:'webhook',label:'WooCommerce Webhook',score:process.env.WOOCOMMERCE_WEBHOOK_SECRET?100:0,ready:Boolean(process.env.WOOCOMMERCE_WEBHOOK_SECRET)},
+      {key:'wordpress',label:'WordPress Publisher',score:publisher.configured?100:0,ready:publisher.configured},
+      {key:'marketing_channels',label:'Marketing Channels',score:(sender.whatsappConfigured||sender.emailConfigured)?100:0,ready:Boolean(sender.whatsappConfigured||sender.emailConfigured)}
+    ];
+    const decisionChecks=checks.filter(x=>['historical_orders','attribution','costs','woocommerce','webhook'].includes(x.key));
+    const decisionScore=Math.round(decisionChecks.reduce((a,x)=>a+x.score,0)/decisionChecks.length);
+    const executionChecks=checks.filter(x=>['wordpress','marketing_channels'].includes(x.key));
+    const executionScore=Math.round(executionChecks.reduce((a,x)=>a+x.score,0)/executionChecks.length);
+    const blockers=checks.filter(x=>!x.ready).map(x=>x.key);
+    return response(200,{summary:{
+      decisionScore,executionScore,
+      decisionStatus:decisionScore>=85?'ready':decisionScore>=65?'partial':'not_ready',
+      executionStatus:executionScore>=85?'ready':executionScore>0?'partial':'not_ready',
+      storedWooOrders:total,attributionRate,costCoverageRate:costRate,
+      backfillBatches:Number(backfill.rows[0]?.batches||0),
+      firstPaidAt:orders.rows[0]?.first_paid_at||null,lastPaidAt:orders.rows[0]?.last_paid_at||null,
+      lastBackfillAt:backfill.rows[0]?.last_batch_at||null
+    },checks,blockers});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/cost-repair-queue'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT oi.product_id,oi.product_name,
+      COUNT(*)::integer AS lines,
+      COUNT(DISTINCT o.id)::integer AS orders,
+      COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS affected_revenue
+      FROM orders o JOIN order_items oi ON oi.order_id=o.id
+      WHERE o.paid_at>=now()-interval '90 days' AND COALESCE(oi.unit_cost_snapshot,0)<=0
+      GROUP BY oi.product_id,oi.product_name
+      ORDER BY affected_revenue DESC LIMIT 50`)).rows;
+    const queue=[];
+    for(const row of rows){
+      const key=String(row.product_id||row.product_name||'unknown');
+      const latest=(await db.query(`SELECT data->>'status' AS status,created_at FROM audit_log
+        WHERE action='ai.cost_repair_status' AND entity_type='product_cost' AND entity_id=$1
+        ORDER BY created_at DESC LIMIT 1`,[key])).rows[0]||null;
+      queue.push({...row,status:latest?.status||'open',statusUpdatedAt:latest?.created_at||null});
+    }
+    return response(200,{queue,summary:{
+      total:queue.length,
+      open:queue.filter(x=>x.status==='open').length,
+      reviewing:queue.filter(x=>x.status==='reviewing').length,
+      resolved:queue.filter(x=>x.status==='resolved').length,
+      dismissed:queue.filter(x=>x.status==='dismissed').length
+    }});
+  }
+
+  const costRepairStatusMatch=url.match(/^\/api\/v1\/marketing\/cost-repair\/([^/]+)\/status$/);
+  if(method==='POST'&&costRepairStatusMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const status=cleanOptional(body.status),allowed=['open','reviewing','resolved','dismissed'];
+    if(!allowed.includes(status))return response(400,{error:'invalid_cost_repair_status'});
+    const key=decodeURIComponent(costRepairStatusMatch[1]);
+    const current=(await db.query(`SELECT data->>'status' AS status FROM audit_log
+      WHERE action='ai.cost_repair_status' AND entity_type='product_cost' AND entity_id=$1
+      ORDER BY created_at DESC LIMIT 1`,[key])).rows[0]?.status||'open';
+    const transitions={open:['reviewing','dismissed'],reviewing:['resolved','dismissed'],resolved:[],dismissed:[]};
+    if(status!==current&&!transitions[current]?.includes(status))return response(409,{error:'invalid_cost_repair_transition',current,status});
+    if(status===current)return response(200,{duplicate:true,status:current});
+    const data={status,from:current,note:cleanLongText(body.note,500),updatedAt:new Date().toISOString()};
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)
+      VALUES($1,'ai.cost_repair_status','product_cost',$2,$3::jsonb)`,[context.userId,key,JSON.stringify(data)]);
+    return response(200,{status,from:current});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/profit-data-coverage'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [summary,products]=await Promise.all([
+      db.query(`SELECT
+        COUNT(oi.*)::integer AS total_items,
+        COUNT(oi.*) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)>0)::integer AS costed_items,
+        COUNT(oi.*) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)<=0)::integer AS zero_cost_items,
+        COUNT(DISTINCT o.id)::integer AS total_orders,
+        COUNT(DISTINCT o.id) FILTER(WHERE EXISTS(
+          SELECT 1 FROM order_items oi2 WHERE oi2.order_id=o.id AND COALESCE(oi2.unit_cost_snapshot,0)<=0
+        ))::integer AS affected_orders,
+        COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue,
+        COALESCE(SUM(oi.subtotal_ex_vat) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)<=0),0)::numeric(14,2) AS affected_revenue
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id
+        WHERE o.paid_at>=now()-interval '90 days'`),
+      db.query(`SELECT oi.product_id,oi.product_name,
+        COUNT(*)::integer AS lines,
+        COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id
+        WHERE o.paid_at>=now()-interval '90 days' AND COALESCE(oi.unit_cost_snapshot,0)<=0
+        GROUP BY oi.product_id,oi.product_name
+        ORDER BY revenue DESC LIMIT 20`)
+    ]);
+    const s=summary.rows[0]||{},totalItems=Number(s.total_items||0),costedItems=Number(s.costed_items||0),
+      totalOrders=Number(s.total_orders||0),affectedOrders=Number(s.affected_orders||0),
+      revenue=Number(s.revenue||0),affectedRevenue=Number(s.affected_revenue||0);
+    return response(200,{summary:{
+      totalItems,costedItems,zeroCostItems:Number(s.zero_cost_items||0),
+      itemCostCoverageRate:totalItems?costedItems/totalItems*100:0,
+      totalOrders,affectedOrders,orderCoverageRate:totalOrders?(totalOrders-affectedOrders)/totalOrders*100:0,
+      revenue,affectedRevenue,revenueCoverageRate:revenue?(revenue-affectedRevenue)/revenue*100:0,
+      status:affectedRevenue/revenue>0.2?'risk':affectedRevenue>0?'partial':'good'
+    },zeroCostProducts:products.rows});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/growth-priority-drafts'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT d.id,d.entity_id AS priority_key,d.data,d.created_at,
+      COALESCE(t.data->>'status',d.data->>'status','draft') AS current_status,
+      t.created_at AS status_updated_at
+      FROM audit_log d
+      LEFT JOIN LATERAL(
+        SELECT data,created_at FROM audit_log t
+        WHERE t.action='ai.growth_priority_status' AND t.entity_type='growth_priority' AND t.entity_id=d.entity_id
+        ORDER BY t.created_at DESC LIMIT 1
+      )t ON true
+      WHERE d.action='ai.growth_priority_draft'
+      ORDER BY d.created_at DESC LIMIT 100`)).rows;
+    return response(200,{drafts:rows,summary:{
+      total:rows.length,
+      draft:rows.filter(x=>x.current_status==='draft').length,
+      approved:rows.filter(x=>x.current_status==='approved').length,
+      inProgress:rows.filter(x=>x.current_status==='in_progress').length,
+      done:rows.filter(x=>x.current_status==='done').length,
+      dismissed:rows.filter(x=>x.current_status==='dismissed').length
+    }});
+  }
+
+  const growthPriorityStatusMatch=url.match(/^\/api\/v1\/marketing\/growth-priority-drafts\/([^/]+)\/status$/);
+  if(method==='POST'&&growthPriorityStatusMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const status=cleanOptional(body.status),allowed=['draft','approved','in_progress','done','dismissed'];
+    if(!allowed.includes(status))return response(400,{error:'invalid_growth_priority_status'});
+    const draft=(await db.query(`SELECT id,entity_id,data FROM audit_log WHERE id=$1 AND action='ai.growth_priority_draft' LIMIT 1`,[growthPriorityStatusMatch[1]])).rows[0];
+    if(!draft)return response(404,{error:'growth_priority_draft_not_found'});
+    const current=(await db.query(`SELECT data->>'status' AS status FROM audit_log WHERE action='ai.growth_priority_status' AND entity_type='growth_priority' AND entity_id=$1 ORDER BY created_at DESC LIMIT 1`,[draft.entity_id])).rows[0]?.status||draft.data?.status||'draft';
+    const transitions={draft:['approved','dismissed'],approved:['in_progress','dismissed'],in_progress:['done','dismissed'],done:[],dismissed:[]};
+    if(status!==current&&!transitions[current]?.includes(status))return response(409,{error:'invalid_growth_priority_transition',current,status});
+    if(status===current)return response(200,{duplicate:true,status:current});
+    const data={status,from:current,note:cleanLongText(body.note,500),draftId:draft.id,updatedAt:new Date().toISOString()};
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.growth_priority_status','growth_priority',$2,$3::jsonb)`,[context.userId,draft.entity_id,JSON.stringify(data)]);
+    return response(200,{status,from:current});
+  }
+
+  if(method==='POST'&&url==='/api/v1/marketing/growth-priority-drafts'){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const domain=cleanOptional(body.domain),title=cleanLongText(body.title,180),priority=cleanOptional(body.priority),reason=cleanLongText(body.reason,500),actionText=cleanLongText(body.action,500);
+    if(!domain||!title||!['high','medium','low'].includes(priority))return response(400,{error:'invalid_growth_priority'});
+    const key=(domain+'|'+title).toLowerCase().replace(/\s+/g,'_').slice(0,240);
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.growth_priority_draft' AND entity_type='growth_priority' AND entity_id=$1 AND created_at>=now()-interval '30 days' LIMIT 1`,[key])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    const data={domain,title,priority,reason,action:actionText,status:'draft',createdAt:new Date().toISOString()};
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.growth_priority_draft','growth_priority',$2,$3::jsonb)`,[context.userId,key,JSON.stringify(data)]);
+    return response(201,{draft:{key,...data}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/executive-growth-priorities'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [attr,lowMargin,channelRisk,atRisk,bundle,costCoverage]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS total,COUNT(*) FILTER(WHERE oa.order_id IS NULL)::integer AS unattributed
+        FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id WHERE o.external_source='woocommerce'`),
+      db.query(`SELECT oi.product_id,oi.product_name,SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
+        SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot))::numeric(14,2) AS profit
+        FROM order_items oi JOIN orders o ON o.id=oi.order_id
+        WHERE o.paid_at>=now()-interval '90 days'
+        GROUP BY oi.product_id,oi.product_name
+        HAVING SUM(oi.subtotal_ex_vat)>0
+        ORDER BY (SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot))/NULLIF(SUM(oi.subtotal_ex_vat),0)) ASC LIMIT 1`),
+      db.query(`WITH order_profit AS(
+        SELECT o.id,(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS net_profit
+        FROM orders o
+        LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity*unit_cost_snapshot),0) AS product_cost FROM order_items WHERE order_id=o.id)items ON true
+        LEFT JOIN order_costs oc ON oc.order_id=o.id
+        LEFT JOIN LATERAL(SELECT COALESCE(SUM(ts.payout_amount)FILTER(WHERE ts.status<>'rejected'),0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id=j.id WHERE j.order_id=o.id)pay ON true
+        WHERE o.paid_at>=now()-interval '90 days'
+      )
+      SELECT COALESCE(NULLIF(mt.source,''),'(direct)') AS source,COALESCE(SUM(op.net_profit),0)::numeric(14,2) AS profit,
+        COALESCE((SELECT SUM(ms.amount) FROM marketing_spend ms WHERE ms.source=COALESCE(NULLIF(mt.source,''),'(direct)') AND ms.spent_on>=current_date-interval '90 days'),0)::numeric(14,2) AS spend
+      FROM order_profit op LEFT JOIN order_attribution oa ON oa.order_id=op.id LEFT JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+      GROUP BY 1 ORDER BY (COALESCE(SUM(op.net_profit),0)-COALESCE((SELECT SUM(ms.amount) FROM marketing_spend ms WHERE ms.source=COALESCE(NULLIF(mt.source,''),'(direct)') AND ms.spent_on>=current_date-interval '90 days'),0)) ASC LIMIT 1`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM(
+        SELECT c.id,MAX(o.paid_at) AS last_order FROM customers c LEFT JOIN orders o ON o.customer_id=c.id GROUP BY c.id
+      )x WHERE x.last_order IS NOT NULL AND x.last_order<now()-interval '90 days'`),
+      db.query(`WITH paid_items AS(
+        SELECT o.id AS order_id,oi.product_id,oi.product_name,oi.subtotal_ex_vat,(oi.quantity*oi.unit_cost_snapshot)::numeric(14,2) AS cost
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE o.paid_at>=now()-interval '90 days'
+      )
+      SELECT a.product_name AS a_name,b.product_name AS b_name,COUNT(DISTINCT a.order_id)::integer AS orders,
+        SUM((a.subtotal_ex_vat-a.cost)+(b.subtotal_ex_vat-b.cost))::numeric(14,2) AS profit,
+        SUM(a.subtotal_ex_vat+b.subtotal_ex_vat)::numeric(14,2) AS revenue
+      FROM paid_items a JOIN paid_items b ON b.order_id=a.order_id AND b.product_id>a.product_id
+      GROUP BY a.product_name,b.product_name HAVING COUNT(DISTINCT a.order_id)>=2
+      ORDER BY profit DESC LIMIT 1`),
+      db.query(`SELECT COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue,
+        COALESCE(SUM(oi.subtotal_ex_vat) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)<=0),0)::numeric(14,2) AS affected_revenue
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id
+        WHERE o.paid_at>=now()-interval '90 days'`)
+    ]);
+    const priorities=[];
+    const cc=costCoverage.rows[0]||{},ccRevenue=Number(cc.revenue||0),ccAffected=Number(cc.affected_revenue||0),profitConfidence=ccRevenue?(1-ccAffected/ccRevenue):1;
+    const profitConfidenceLabel=profitConfidence>=0.9?'high':profitConfidence>=0.75?'medium':'low';
+    const a=attr.rows[0]||{},total=Number(a.total||0),un=Number(a.unattributed||0),unRate=total?un/total*100:0;
+    if(unRate>20)priorities.push({domain:'attribution',priority:'high',title:'رفع تغطية Attribution',reason:`${unRate.toFixed(1)}% من طلبات WooCommerce غير منسوبة.`,action:'شغّل Attribution Repair ثم حسّن UTM للمصادر الأعلى فقدًا.'});
+    const lm=lowMargin.rows[0];
+    if(lm){const rev=Number(lm.revenue||0),p=Number(lm.profit||0),m=rev?p/rev*100:0;if(m<15)priorities.push({domain:'profit',priority:'high',confidence:profitConfidenceLabel,title:'مراجعة منتج منخفض الهامش',reason:`${lm.product_name} بهامش ${m.toFixed(1)}%.`,action:profitConfidenceLabel==='low'?'استكمل Cost Repair أولًا ثم أعد تقييم السعر والعرض.':'راجع التكلفة والسعر والعرض قبل زيادة الإعلان أو الخصم.'});}
+    const cr=channelRisk.rows[0];
+    if(cr&&Number(cr.spend||0)>0&&Number(cr.profit||0)<Number(cr.spend||0))priorities.push({domain:'channel',priority:'high',confidence:profitConfidenceLabel,title:'مراجعة إنفاق قناة',reason:`${cr.source}: الربح ${Number(cr.profit||0).toFixed(0)} ر.س مقابل إنفاق ${Number(cr.spend||0).toFixed(0)} ر.س.`,action:profitConfidenceLabel==='low'?'استكمل Cost Repair قبل أي قرار إنفاق نهائي.':'جمّد أي توسع إضافي وراجع الحملة والعرض والإسناد.'});
+    const ar=Number(atRisk.rows[0]?.total||0);
+    if(ar>0)priorities.push({domain:'retention',priority:ar>=20?'high':'medium',title:'استرجاع العملاء المعرضين للفقد',reason:`${ar} عميلًا بلا طلب منذ أكثر من 90 يومًا.`,action:'جهّز Win-back Draft للعملاء ذوي القيمة الأعلى أولًا.'});
+    const bu=bundle.rows[0];
+    if(bu){const rev=Number(bu.revenue||0),p=Number(bu.profit||0),m=rev?p/rev*100:0;if(m>=25)priorities.push({domain:'bundle',priority:'medium',confidence:profitConfidenceLabel,title:'اختبار باقة عالية الهامش',reason:`${bu.a_name} + ${bu.b_name} تكررت ${bu.orders} مرات بهامش ${m.toFixed(1)}%.`,action:profitConfidenceLabel==='low'?'استكمل تكاليف المنتجات أولًا قبل اعتماد هامش الباقة.':'أنشئ Bundle Draft واختبر عرضه دون خصم تلقائي.'});}
+    if(!priorities.length)priorities.push({domain:'monitoring',priority:'low',title:'استمرار المراقبة',reason:'لا توجد إشارة حرجة واضحة من البيانات الحالية.',action:'استمر في مراقبة الربحية وAttribution والRetention.'});
+    const rank={high:0,medium:1,low:2};priorities.sort((x,y)=>rank[x.priority]-rank[y.priority]);
+    return response(200,{priorities:priorities.slice(0,5),profitConfidence:{score:profitConfidence*100,label:profitConfidenceLabel,affectedRevenue:ccAffected,totalRevenue:ccRevenue}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/attribution-repair/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [single,bulk,recentNoUtm]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS attempts,
+        COUNT(*) FILTER(WHERE (data->>'repaired')::boolean IS TRUE)::integer AS repaired
+        FROM audit_log WHERE action='woocommerce.attribution_recheck'`),
+      db.query(`SELECT COUNT(*)::integer AS batches,
+        COALESCE(SUM((data->>'processed')::integer),0)::integer AS processed,
+        COALESCE(SUM((data->>'repaired')::integer),0)::integer AS repaired,
+        COALESCE(SUM((data->>'noUtm')::integer),0)::integer AS no_utm,
+        COALESCE(SUM((data->>'failed')::integer),0)::integer AS failed
+        FROM audit_log WHERE action='woocommerce.attribution_bulk_recheck'`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM audit_log
+        WHERE action='woocommerce.attribution_recheck'
+        AND (data->>'repaired')::boolean IS FALSE
+        AND created_at>=now()-interval '30 days'`)
+    ]);
+    const s=single.rows[0]||{},b=bulk.rows[0]||{};
+    const attempts=Number(s.attempts||0)+Number(b.processed||0),repaired=Number(s.repaired||0)+Number(b.repaired||0);
+    return response(200,{summary:{
+      attempts,repaired,noUtm:Number(b.no_utm||0)+Number(recentNoUtm.rows[0]?.total||0),
+      failed:Number(b.failed||0),successRate:attempts?repaired/attempts*100:0,batches:Number(b.batches||0)
+    }});
+  }
+
+  if(method==='POST'&&url==='/api/v1/marketing/attribution-repair/bulk'){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const limit=Math.min(10,Math.max(1,Number(body.limit||10)));
+    if(!Number.isInteger(limit))return response(400,{error:'invalid_bulk_limit'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    const queue=(await db.query(`SELECT o.id,o.external_order_id FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id
+      WHERE o.external_source='woocommerce' AND oa.order_id IS NULL
+      AND NOT EXISTS(
+        SELECT 1 FROM audit_log al
+        WHERE al.action='woocommerce.attribution_recheck' AND al.entity_type='order' AND al.entity_id=o.id::text
+        AND (al.data->>'repaired')::boolean IS FALSE AND al.created_at>=now()-interval '30 days'
+      )
+      ORDER BY o.total_ex_vat DESC NULLS LAST,o.paid_at ASC NULLS LAST LIMIT $1`,[limit])).rows;
+    const summary={requested:limit,processed:0,repaired:0,noUtm:0,failed:0};
+    for(const internal of queue){
+      summary.processed++;
+      try{
+        const raw=await woo.getRawOrder(internal.external_order_id);
+        const before=(await db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution WHERE order_id=$1`,[internal.id])).rows[0]?.total||0;
+        await persistPaidServiceOrder(db,raw,{organizationId:context.tenantId||undefined});
+        const after=(await db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution WHERE order_id=$1`,[internal.id])).rows[0]?.total||0;
+        if(Number(after)>Number(before))summary.repaired++;else summary.noUtm++;
+      }catch(error){summary.failed++;}
+    }
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'woocommerce.attribution_bulk_recheck','woocommerce','orders',$2::jsonb)`,[context.userId,JSON.stringify(summary)]);
+    return response(200,{summary});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/attribution-repair-queue'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT o.id,o.external_order_id,o.paid_at,o.total_ex_vat,
+      EXTRACT(EPOCH FROM (now()-COALESCE(o.paid_at,o.created_at)))/86400 AS age_days
+      FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id
+      WHERE o.external_source='woocommerce' AND oa.order_id IS NULL
+      ORDER BY o.total_ex_vat DESC NULLS LAST,o.paid_at ASC NULLS LAST LIMIT 50`)).rows.map(x=>{
+        const value=Number(x.total_ex_vat||0),ageDays=Number(x.age_days||0);
+        let priority='low';
+        if(value>=1000||ageDays>=180)priority='high'; else if(value>=400||ageDays>=90)priority='medium';
+        return{...x,totalExVat:value,ageDays,priority};
+      });
+    return response(200,{queue:rows,summary:{total:rows.length,high:rows.filter(x=>x.priority==='high').length,medium:rows.filter(x=>x.priority==='medium').length}});
+  }
+
+  const attributionRecheckMatch=url.match(/^\/api\/v1\/marketing\/orders\/([^/]+)\/attribution-recheck$/);
+  if(method==='POST'&&attributionRecheckMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const internal=(await db.query(`SELECT * FROM orders WHERE id=$1 AND external_source='woocommerce' LIMIT 1`,[attributionRecheckMatch[1]])).rows[0];
+    if(!internal)return response(404,{error:'woocommerce_order_not_found'});
+    const already=(await db.query(`SELECT 1 FROM order_attribution WHERE order_id=$1 LIMIT 1`,[internal.id])).rows[0];
+    if(already)return response(200,{repaired:false,reason:'already_attributed'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const raw=await woo.getRawOrder(internal.external_order_id);
+      const before=(await db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution WHERE order_id=$1`,[internal.id])).rows[0]?.total||0;
+      await persistPaidServiceOrder(db,raw,{organizationId:context.tenantId||undefined});
+      const after=(await db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution WHERE order_id=$1`,[internal.id])).rows[0]?.total||0;
+      const repaired=Number(after)>Number(before);
+      await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'woocommerce.attribution_recheck','order',$2,$3::jsonb)`,[context.userId,internal.id,JSON.stringify({externalOrderId:internal.external_order_id,repaired})]);
+      return response(200,{repaired,reason:repaired?'utm_found':'no_real_utm_found'});
+    }catch(error){return response(502,{error:'woocommerce_attribution_recheck_failed'});}
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/attribution-coverage'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [summary,sources,unattributed]=await Promise.all([
+      db.query(`SELECT
+        COUNT(*)::integer AS total,
+        COUNT(oa.order_id)::integer AS attributed,
+        COUNT(*) FILTER(WHERE oa.order_id IS NULL)::integer AS unattributed,
+        COUNT(*) FILTER(WHERE COALESCE(NULLIF(mt.source,''),'(direct)')='(direct)')::integer AS direct
+        FROM orders o
+        LEFT JOIN order_attribution oa ON oa.order_id=o.id
+        LEFT JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+        WHERE o.external_source='woocommerce'`),
+      db.query(`SELECT COALESCE(NULLIF(mt.source,''),'(direct)') AS source,COUNT(*)::integer AS orders,
+        COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue
+        FROM orders o
+        JOIN order_attribution oa ON oa.order_id=o.id
+        JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+        WHERE o.external_source='woocommerce'
+        GROUP BY 1 ORDER BY orders DESC LIMIT 20`),
+      db.query(`SELECT o.id,o.external_order_id,o.paid_at,o.total_ex_vat
+        FROM orders o LEFT JOIN order_attribution oa ON oa.order_id=o.id
+        WHERE o.external_source='woocommerce' AND oa.order_id IS NULL
+        ORDER BY o.paid_at ASC NULLS LAST LIMIT 25`)
+    ]);
+    const s=summary.rows[0]||{},total=Number(s.total||0),attributed=Number(s.attributed||0),unattributedCount=Number(s.unattributed||0),direct=Number(s.direct||0);
+    return response(200,{summary:{
+      total,attributed,unattributed:unattributedCount,direct,
+      attributedRate:total?attributed/total*100:0,
+      unattributedRate:total?unattributedCount/total*100:0,
+      directRate:total?direct/total*100:0
+    },sources:sources.rows,oldestUnattributed:unattributed.rows});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/operational-readiness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient(),publisher=createWordPressPublisher(),sender=createMarketingChannelSender();
+    const [wooOrders,attrOrders,lastPersist,lastBackfill]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS total FROM orders WHERE external_source='woocommerce'`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution oa JOIN orders o ON o.id=oa.order_id WHERE o.external_source='woocommerce'`),
+      db.query(`SELECT created_at FROM audit_log WHERE action='woocommerce.order_persisted' ORDER BY created_at DESC LIMIT 1`),
+      db.query(`SELECT created_at FROM audit_log WHERE action='woocommerce.backfill_batch' ORDER BY created_at DESC LIMIT 1`)
+    ]);
+    const total=Number(wooOrders.rows[0]?.total||0),attributed=Number(attrOrders.rows[0]?.total||0);
+    const checks=[
+      {key:'woocommerce_api',label:'WooCommerce API',ready:woo.configured,critical:true},
+      {key:'woocommerce_webhook',label:'WooCommerce Webhook',ready:Boolean(process.env.WOOCOMMERCE_WEBHOOK_SECRET),critical:true},
+      {key:'database_orders',label:'WooCommerce Orders Persisted',ready:total>0,critical:true},
+      {key:'attribution',label:'Attribution Coverage',ready:total===0?false:(attributed/total)>=0.5,critical:false},
+      {key:'historical_sync',label:'Historical Sync',ready:woo.configured,critical:false},
+      {key:'wordpress_publisher',label:'WordPress Publisher',ready:publisher.configured,critical:false},
+      {key:'whatsapp',label:'WhatsApp Provider',ready:sender.whatsappConfigured,critical:false},
+      {key:'email',label:'Email Provider',ready:sender.emailConfigured,critical:false},
+      {key:'otp_sender',label:'OTP Sender',ready:Boolean(process.env.OTP_SENDER_URL&&process.env.OTP_SENDER_API_KEY)||String(process.env.SUBIL_OTP_TEST_MODE||'').toLowerCase()==='true',critical:true}
+    ];
+    const blockers=checks.filter(x=>x.critical&&!x.ready),warnings=checks.filter(x=>!x.critical&&!x.ready);
+    const score=Math.round(checks.filter(x=>x.ready).length/checks.length*100);
+    return response(200,{score,status:blockers.length?'blocked':warnings.length?'partial':'ready',checks,blockers,warnings,metrics:{
+      storedWooOrders:total,attributedWooOrders:attributed,attributionRate:total?attributed/total*100:0,
+      lastPersistedAt:lastPersist.rows[0]?.created_at||null,lastBackfillAt:lastBackfill.rows[0]?.created_at||null
+    }});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/integration-health'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient(),publisher=createWordPressPublisher(),sender=createMarketingChannelSender();
+    const recentWebhook=(await db.query(`SELECT created_at FROM audit_log WHERE action='woocommerce.order_persisted' ORDER BY created_at DESC LIMIT 1`)).rows[0]||null;
+    const recentBackfill=(await db.query(`SELECT created_at FROM audit_log WHERE action='woocommerce.backfill_batch' ORDER BY created_at DESC LIMIT 1`)).rows[0]||null;
+    return response(200,{integrations:{
+      woocommerceApi:{configured:woo.configured},
+      woocommerceWebhook:{configured:Boolean(process.env.WOOCOMMERCE_WEBHOOK_SECRET),lastPersistedAt:recentWebhook?.created_at||null},
+      wordpressPublisher:{configured:publisher.configured},
+      whatsapp:{configured:sender.whatsappConfigured},
+      email:{configured:sender.emailConfigured},
+      push:{configured:Boolean(process.env.PUSH_PROVIDER_URL&&process.env.PUSH_PROVIDER_API_KEY)},
+      historicalSync:{ready:woo.configured,lastBatchAt:recentBackfill?.created_at||null}
+    }});
+  }
+
+  if (method === 'GET' && url === '/api/v1/marketing/channels/status') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const sender=createMarketingChannelSender();
+    return response(200,{channels:{
+      push:{configured:Boolean(process.env.PUSH_PROVIDER_URL&&process.env.PUSH_PROVIDER_API_KEY)},
+      whatsapp:{configured:sender.whatsappConfigured},
+      email:{configured:sender.emailConfigured}
+    }});
+  }
+
+  const publishContentMatch=url.match(/^\/api\/v1\/marketing\/content\/([^/]+)\/publish-wordpress$/);
+  if (method === 'POST' && publishContentMatch) {
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const publisher=createWordPressPublisher();
+    if(!publisher.configured)return response(503,{error:'wordpress_publisher_not_configured'});
+    try{
+      const result=await publishContentExternally(db,{contentId:publishContentMatch[1],actorUserId:context.userId,publisher});
+      return result?response(200,result):response(404,{error:'content_not_found'});
+    }catch(error){
+      if(error.message==='Content must be approved before publishing')return response(409,{error:'content_not_approved'});
+      return response(502,{error:'wordpress_publish_failed'});
+    }
+  }
+
+  const contentIdeaDraftMatch=url.match(/^\/api\/v1\/marketing\/store\/content-ideas\/([^/]+)\/draft$/);
+  if (method === 'POST' && contentIdeaDraftMatch) {
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const product=await woo.getProduct(contentIdeaDraftMatch[1]);
+      const keyword=product.name.split('–')[0].trim().slice(0,120);
+      const title=cleanLongText(body.title,180)||`دليل ${product.name}`;
+      const slug=String(title).toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-|-$/g,'').slice(0,180);
+      const metaDescription=`تعرف على ${product.name}، أهم الاستخدامات والمميزات وما الذي يجب معرفته قبل الشراء من سبيل.`.slice(0,160);
+      const productUrl=`${String(process.env.WOOCOMMERCE_BASE_URL||'https://subil.store').replace(/\/$/,'')}/product/${product.slug}/?utm_source=organic_content&utm_medium=article&utm_campaign=subil_cmo&utm_content=${encodeURIComponent(slug)}`;
+      const bodyHtml=`<h2>${title}</h2><p>هذا الدليل يساعدك على فهم ${product.name} واستخدامه المناسب قبل اتخاذ قرار الشراء.</p><h3>ما هو المنتج؟</h3><p>${product.shortDescription||'منتج من متجر سبيل ضمن حلول المياه المنزلية.'}</p><h3>متى يكون مناسبًا؟</h3><p>يعتمد الاختيار على احتياج المنزل أو المنشأة، مصدر المياه، ونوع الاستخدام. يفضل مراجعة المواصفات ونطاق التركيب قبل الشراء.</p><h3>ما الذي يجب الانتباه له؟</h3><ul><li>التأكد من توافق المنتج مع موقع التركيب.</li><li>مراجعة متطلبات الصيانة وقطع الغيار.</li><li>اختيار المنتج بناءً على الاستخدام الفعلي وليس الاسم فقط.</li></ul><h3>منتجات وخدمات سبيل</h3><p><a href="${productUrl}">عرض ${product.name} في متجر سبيل</a> للحصول على السعر والمواصفات الحالية وخيارات الطلب.</p>`;
+      const item=await createContent(db,{title,slug,contentType:'blog',channel:'website',body:bodyHtml,primaryKeyword:keyword,metaDescription,scheduledAt:null,actorUserId:context.userId});
+      return response(201,{content:item,sourceProduct:product});
+    }catch(error){return response(502,{error:'content_draft_creation_failed'});}
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/store/backfill-status'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [orders,attributed,batches,lastBatch]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS total,MIN(paid_at) AS first_paid_at,MAX(paid_at) AS last_paid_at,COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue FROM orders WHERE external_source='woocommerce'`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution oa JOIN orders o ON o.id=oa.order_id WHERE o.external_source='woocommerce'`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM audit_log WHERE action='woocommerce.backfill_batch'`),
+      db.query(`SELECT created_at,data FROM audit_log WHERE action='woocommerce.backfill_batch' ORDER BY created_at DESC LIMIT 1`)
+    ]);
+    const o=orders.rows[0]||{},a=attributed.rows[0]||{},b=batches.rows[0]||{},last=lastBatch.rows[0]||null,total=Number(o.total||0),attr=Number(a.total||0);
+    return response(200,{coverage:{storedOrders:total,attributedOrders:attr,attributionRate:total?attr/total*100:0,revenue:Number(o.revenue||0),firstPaidAt:o.first_paid_at||null,lastPaidAt:o.last_paid_at||null,batches:Number(b.total||0)},lastBatch:last?{createdAt:last.created_at,...last.data}:null});
+  }
+
+  if(method==='POST'&&url==='/api/v1/marketing/store/backfill-orders'){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const page=Math.max(1,Number(body.page||1)),perPage=Math.min(25,Math.max(1,Number(body.perPage||25)));
+    if(!Number.isInteger(page)||!Number.isInteger(perPage))return response(400,{error:'invalid_backfill_page'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    const statuses=['processing','completed'],summary={page,perPage,processed:0,created:0,duplicates:0,failed:0,byStatus:{}};
+    const perStatus=Math.max(1,Math.ceil(perPage/statuses.length));
+    for(const status of statuses){
+      const remaining=perPage-summary.processed;
+      if(remaining<=0){summary.byStatus[status]=0;continue;}
+      const take=Math.min(perStatus,remaining);
+      let orders=[];try{orders=await woo.listRawOrders({page,perPage:take,status});}catch(error){return response(502,{error:'woocommerce_backfill_fetch_failed',status});}
+      summary.byStatus[status]=orders.length;
+      for(const order of orders.slice(0,remaining)){
+        summary.processed++;
+        try{
+          const result=await persistPaidServiceOrder(db,order,{organizationId:context.tenantId||undefined});
+          if(result?.duplicate)summary.duplicates++;else summary.created++;
+        }catch(error){summary.failed++;}
+      }
+    }
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'woocommerce.backfill_batch','woocommerce','orders',$2::jsonb)`,[context.userId,JSON.stringify(summary)]);
+    return response(200,{summary,nextPage:summary.processed>0?page+1:null});
+  }
+
+  if (method === 'GET' && url === '/api/v1/marketing/store/commerce-analytics') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const analytics=createSubilCommerceAnalyticsClient();
+    if(!analytics.configured)return response(503,{error:'commerce_analytics_not_configured'});
+    try{return response(200,{analytics:await analytics.getAnalytics()});}
+    catch(error){return response(502,{error:'commerce_analytics_unavailable'});}
+  }
+
+  if (method === 'GET' && url === '/api/v1/marketing/store/content-ideas') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const intel=await woo.getStoreIntelligence();
+      const opportunities=intel?.products?.seo?.opportunities||[];
+      const ideas=opportunities.slice(0,12).map((x,index)=>({
+        id:`seo-${x.id}`,
+        priority:x.priority,
+        productId:x.id,
+        productName:x.name,
+        title:index%3===0?`دليل اختيار ${x.name}`:index%3===1?`أسئلة شائعة عن ${x.name}`:`مقارنة واستخدامات ${x.name}`,
+        angle:index%3===0?'دليل شراء واستخدام':index%3===1?'FAQ وتحسين التحويل':'مقارنة وتعليم العميل',
+        suggestedChannel:index%2===0?'website':'email',
+        sourceIssues:x.issues
+      }));
+      return response(200,{ideas});
+    }catch(error){return response(502,{error:'woocommerce_unavailable'});}
+  }
+
+  if (method === 'GET' && url === '/api/v1/marketing/store/intelligence') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{return response(200,{connected:true,intelligence:await woo.getStoreIntelligence()});}
+    catch(error){return response(502,{error:'woocommerce_unavailable'});}
+  }
+  if (method === 'GET' && url === '/api/v1/marketing/store/orders') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{return response(200,{orders:await woo.listOrders({page:Number(context.page||1),perPage:Math.min(Number(context.perPage||50),100),status:context.status||'any',after:context.after||''})});}
+    catch(error){return response(502,{error:'woocommerce_unavailable'});}
+  }
+  if (method === 'GET' && url === '/api/v1/marketing/store/customers') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{return response(200,{customers:await woo.listCustomers({page:Number(context.page||1),perPage:Math.min(Number(context.perPage||50),100)})});}
+    catch(error){return response(502,{error:'woocommerce_unavailable'});}
+  }
+
+  if (method === 'GET' && url === '/api/v1/marketing/store/products') {
+    if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const products=await woo.listProducts({page:Number(context.page||1),perPage:Math.min(Number(context.perPage||24),50),search:context.search||'',category:context.category||''});
+      return response(200,{connected:true,products});
+    }catch(error){return response(502,{error:'woocommerce_unavailable'});}
+  }
+  const marketingStoreSeoMatch=url.match(/^\/api\/v1\/marketing\/store\/products\/([^/]+)\/seo\/apply$/);
+  if (method === 'POST' && marketingStoreSeoMatch) {
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const result=await woo.applySafeSeoPatch(marketingStoreSeoMatch[1]);
+      return response(200,result);
+    }catch(error){return response(502,{error:'woocommerce_seo_apply_failed'});}
+  }
+  const marketingStoreProductMatch=url.match(/^\/api\/v1\/marketing\/store\/products\/([^/]+)$/);
+  if (method === 'PATCH' && marketingStoreProductMatch) {
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    if(!woo.configured)return response(503,{error:'woocommerce_not_configured'});
+    try{
+      const product=await woo.updateProduct(marketingStoreProductMatch[1],{
+        name:typeof body.name==='string'?body.name:undefined,
+        shortDescription:typeof body.shortDescription==='string'?body.shortDescription:undefined,
+        description:typeof body.description==='string'?body.description:undefined
+      });
+      return response(200,{product});
+    }catch(error){
+      if(error.message==='No safe product fields supplied')return response(400,{error:'no_safe_fields'});
+      return response(502,{error:'woocommerce_update_failed'});
+    }
+  }
+
   if (method === 'GET' && url === '/api/v1/marketing/stats') {
     if (!can(role,'marketing:read')) return response(403,{error:'forbidden'});
     return response(200,{stats:await createRepositories(db).marketing.stats()});
@@ -231,10 +817,555 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
   if(method==='POST'&&url==='/api/v1/marketing/abandoned-carts/recovery/run'){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const limit=Number(body.limit??100);if(!Number.isInteger(limit)||limit<1||limit>500)return response(400,{error:'invalid_recovery_limit'});return response(200,await runAbandonedCartRecovery(db,{actorUserId:context.userId,limit}));}
   const cartRecoveredMatch=url.match(/^\/api\/v1\/marketing\/abandoned-carts\/([^/]+)\/recovered$/);if(method==='POST'&&cartRecoveredMatch){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const cart=await markCartRecovered(db,{cartId:cartRecoveredMatch[1],orderId:cleanOptional(body.orderId),actorUserId:context.userId});return cart?response(200,{cart}):response(404,{error:'active_abandoned_cart_not_found'});}
 
+  if(method==='GET'&&url==='/api/v1/marketing/content/performance'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT mc.id,mc.title,mc.slug,mc.status,mc.seo_score,mc.published_at,
+      COUNT(DISTINCT mt.id)::integer AS touches,
+      COUNT(DISTINCT oa.order_id)::integer AS attributed_orders,
+      COALESCE(COALESCE((SELECT SUM(x.total_ex_vat) FROM (SELECT DISTINCT o2.id,o2.total_ex_vat FROM order_attribution oa2 JOIN orders o2 ON o2.id=oa2.order_id JOIN marketing_touches mt2 ON mt2.id=oa2.last_touch_id WHERE mt2.content=mc.slug) x),0),0)::numeric(14,2) AS attributed_revenue,
+      (SELECT al.data->>'link' FROM audit_log al WHERE al.entity_type='marketing_content' AND al.entity_id=mc.id::text AND al.action='marketing.content_published_wordpress' ORDER BY al.created_at DESC LIMIT 1) AS wordpress_url
+      FROM marketing_content mc
+      LEFT JOIN marketing_touches mt ON mt.content=mc.slug
+      LEFT JOIN order_attribution oa ON oa.first_touch_id=mt.id OR oa.last_touch_id=mt.id
+      LEFT JOIN orders o ON o.id=oa.order_id
+      GROUP BY mc.id
+      ORDER BY COALESCE(mc.published_at,mc.updated_at,mc.created_at) DESC
+      LIMIT 50`)).rows;
+    return response(200,{content:rows});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/content/stats'){if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});return response(200,{stats:await createRepositories(db).marketing.contentStats()});}
   if(method==='GET'&&url==='/api/v1/marketing/content'){if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});const pagination=parsePagination(context),status=context.status||'all',channel=context.channel||'all',from=context.from?parseDate(context.from):null,to=context.to?parseDate(context.to):null;if(!pagination)return response(400,{error:'invalid_pagination'});if(!validContentStatus(status)||!validContentChannel(channel)||(context.from&&!from)||(context.to&&!to)||(from&&to&&from>=to))return response(400,{error:'invalid_content_filter'});const rows=await createRepositories(db).marketing.content({...pagination,status,channel,from,to});return response(200,{content:rows.map(({total_count,...x})=>x),pagination:{...pagination,total:rows[0]?.total_count||0},status,channel});}
   if(method==='POST'&&url==='/api/v1/marketing/content'){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const title=cleanOptional(body.title),slug=cleanOptional(body.slug).toLowerCase(),contentType=cleanOptional(body.contentType),channel=cleanOptional(body.channel),contentBody=cleanOptional(body.body),primaryKeyword=cleanOptional(body.primaryKeyword),metaDescription=cleanOptional(body.metaDescription),scheduledAt=body.scheduledAt?parseDate(body.scheduledAt):null;if(title.length<3||title.length>200||!slug||slug.length>200||!/^[-a-z0-9\u0600-\u06ff]+$/.test(slug)||!['social','blog','email','landing_page'].includes(contentType)||!validContentChannel(channel,false)||contentBody.length>50000||primaryKeyword.length>120||metaDescription.length>200||(body.scheduledAt&&!scheduledAt))return response(400,{error:'invalid_marketing_content'});try{return response(201,{content:await createContent(db,{title,slug,contentType,channel,body:contentBody,primaryKeyword,metaDescription,scheduledAt,actorUserId:context.userId})});}catch(error){if(error.code==='23505')return response(409,{error:'content_slug_exists'});throw error;}}
   const contentTransitionMatch=url.match(/^\/api\/v1\/marketing\/content\/([^/]+)\/transition$/);if(method==='POST'&&contentTransitionMatch){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});if(!context.userId)return response(401,{error:'user_identity_required'});const to=cleanOptional(body.to),scheduledAt=body.scheduledAt?parseDate(body.scheduledAt):null;if(!validContentStatus(to,false)||(body.scheduledAt&&!scheduledAt))return response(400,{error:'invalid_content_transition'});try{const content=await transitionContent(db,{contentId:contentTransitionMatch[1],to,scheduledAt,actorUserId:context.userId});return content?response(200,{content}):response(404,{error:'marketing_content_not_found'});}catch(error){if(error.message.includes('Invalid content transition')||error.message.includes('Schedule time required'))return response(409,{error:'content_transition_conflict',message:error.message});throw error;}}
+
+  if(method==='GET'&&url==='/api/v1/marketing/executive-brief-live'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient(),commerce=createSubilCommerceAnalyticsClient();
+    let store=null,commerceData=null;
+    if(woo.configured){try{store=await woo.getStoreIntelligence()}catch{}}
+    if(commerce.configured){try{commerceData=await commerce.getAnalytics()}catch{}}
+    const revenueRows=(await db.query(`SELECT COUNT(*)::integer AS orders,COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue,
+      COALESCE(AVG(total_ex_vat),0)::numeric(14,2) AS aov FROM orders WHERE paid_at>=now()-interval '90 days'`)).rows[0]||{};
+    const channelRows=(await db.query(`SELECT COALESCE(NULLIF(mt.source,''),'(direct)') AS source,COUNT(DISTINCT oa.order_id)::integer AS orders,
+      COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue
+      FROM order_attribution oa JOIN orders o ON o.id=oa.order_id JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+      WHERE o.paid_at>=now()-interval '90 days'
+      GROUP BY COALESCE(NULLIF(mt.source,''),'(direct)') ORDER BY revenue DESC LIMIT 5`)).rows;
+    const topProduct=(await db.query(`SELECT oi.product_name,SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,COUNT(DISTINCT oi.order_id)::integer AS orders
+      FROM order_items oi JOIN orders o ON o.id=oi.order_id
+      WHERE o.paid_at>=now()-interval '90 days'
+      GROUP BY oi.product_name ORDER BY revenue DESC LIMIT 1`)).rows[0]||null;
+    const contentTop=(await db.query(`SELECT COALESCE(NULLIF(mt.content,''),'(بدون محتوى)') AS content,
+      COUNT(DISTINCT oa.order_id)::integer AS orders,COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue
+      FROM order_attribution oa JOIN orders o ON o.id=oa.order_id JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+      WHERE o.paid_at>=now()-interval '90 days' AND NULLIF(mt.content,'') IS NOT NULL
+      GROUP BY mt.content ORDER BY revenue DESC LIMIT 1`)).rows[0]||null;
+    const actions=[];
+    if((store?.products?.seo?.highPriority||0)>0)actions.push({priority:'high',title:'معالجة فرص SEO عالية الأولوية',reason:`هناك ${store.products.seo.highPriority} منتجًا بأولوية عالية.`,action:'ابدأ بأعلى المنتجات في SEO Queue وطبق التحسين الآمن ثم راقب الزيارات والتحويل.'});
+    if((store?.customers?.atRisk||0)>0)actions.push({priority:'high',title:'تشغيل Win-back للعملاء المعرضين للفقد',reason:`تم رصد ${store.customers.atRisk} عميلًا متكررًا دون شراء حديث.`,action:'جهز رحلة استعادة للموافقين على التسويق مرتبطة بالصيانة والمنتج التالي المناسب.'});
+    const aov=Number(revenueRows.aov||0);
+    if(aov<300)actions.push({priority:'medium',title:'رفع متوسط قيمة الطلب',reason:`AOV الحالي ${aov.toFixed(0)} ر.س.`,action:'وسع Cross-sell وUpsell على صفحات المنتجات والسلة وراقب multi-item AOV.'});
+    if(!channelRows.length)actions.push({priority:'high',title:'سد فجوة Attribution',reason:'لا توجد قنوات منسوبة كفاية للطلبات الأخيرة.',action:'تحقق من UTM وWooCommerce Order Attribution ثم راقب الطلبات الجديدة.'});
+    if(commerceData?.dataQuality&&!commerceData.dataQuality.healthy)actions.push({priority:'medium',title:'تنظيف جودة بيانات المتجر',reason:`${commerceData.dataQuality.warnings.length} تحذير جودة بيانات موجود.`,action:'استبعد القيم الشاذة من القرار حتى تصحيح المصدر، ولا تستخدمها في ترتيب المنتجات.'});
+    const summary={
+      revenue:Number(revenueRows.revenue||0),orders:Number(revenueRows.orders||0),aov,
+      topProduct,topChannel:channelRows[0]||null,topContent:contentTop,
+      seo:{needsWork:store?.products?.seo?.needsWork||0,highPriority:store?.products?.seo?.highPriority||0},
+      customers:{vip:store?.customers?.vipCustomers||0,repeat:store?.customers?.repeatCustomers||0,atRisk:store?.customers?.atRisk||0},
+      dataQuality:commerceData?.dataQuality||null
+    };
+    const headline=summary.revenue>0?`حقق المتجر ${summary.revenue.toFixed(0)} ر.س من ${summary.orders} طلبًا خلال آخر 90 يومًا بمتوسط ${summary.aov.toFixed(0)} ر.س للطلب.`:'لا توجد مبيعات مدفوعة كافية في بيانات سبيل خلال آخر 90 يومًا.';
+    return response(200,{generatedAt:new Date().toISOString(),headline,summary,actions:actions.slice(0,3)});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/autopilot/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient();
+    let store=null;if(woo.configured){try{store=await woo.getStoreIntelligence()}catch{}}
+    const seoRuns=(await db.query(`SELECT COUNT(*)::integer AS runs,
+      COUNT(*) FILTER(WHERE COALESCE((data->>'changed')::boolean,false)=true)::integer AS changed_runs
+      FROM audit_log WHERE action='ai.autopilot_seo_apply' AND created_at>=now()-interval '30 days'`)).rows[0]||{};
+    const winback=(await db.query(`SELECT COUNT(*)::integer AS drafts,
+      COUNT(*) FILTER(WHERE mc.status IN('queued','completed'))::integer AS progressed,
+      COALESCE(SUM(cr.cnt),0)::integer AS recipients
+      FROM marketing_campaigns mc
+      LEFT JOIN LATERAL(SELECT COUNT(*)::integer AS cnt FROM campaign_recipients WHERE campaign_id=mc.id)cr ON true
+      WHERE mc.name='Win-back 90 يوم' AND mc.created_at>=now()-interval '30 days'`)).rows[0]||{};
+    const latestSeo=(await db.query(`SELECT entity_id,data,created_at FROM audit_log WHERE action='ai.autopilot_seo_apply' ORDER BY created_at DESC LIMIT 10`)).rows;
+    return response(200,{seo:{runs:Number(seoRuns.runs||0),changedRuns:Number(seoRuns.changed_runs||0),currentBacklog:Number(store?.products?.seo?.needsWork||0),currentHighPriority:Number(store?.products?.seo?.highPriority||0),latest:latestSeo},winback:{drafts:Number(winback.drafts||0),progressed:Number(winback.progressed||0),recipients:Number(winback.recipients||0)}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/autopilot/history'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT id,actor_user_id,action,entity_type,entity_id,data,created_at
+      FROM audit_log
+      WHERE action IN('ai.autopilot_seo_apply','ai.autopilot_winback_draft')
+      ORDER BY created_at DESC LIMIT 50`)).rows;
+    return response(200,{history:rows});
+  }
+
+  if(method==='POST'&&url==='/api/v1/marketing/alerts/run'){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    return response(200,await scanMarketingAlerts(db,{actorUserId:context.userId,organizationId:context.tenantId||undefined}));
+  }
+
+  const nextBestDraftMatch=url.match(/^\/api\/v1\/marketing\/customers\/([^/]+)\/next-best-action-draft$/);
+  if(method==='POST'&&nextBestDraftMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const customerId=nextBestDraftMatch[1],productId=cleanOptional(body.productId),productName=cleanLongText(body.productName,200);
+    if(!productId||!productName)return response(400,{error:'invalid_next_best_product'});
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.next_best_action_draft' AND entity_type='customer' AND entity_id=$1 AND data->>'productId'=$2 AND created_at>=now()-interval '30 days' LIMIT 1`,[customerId,productId])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.next_best_action_draft','customer',$2,$3::jsonb)`,[context.userId,customerId,JSON.stringify({productId,productName,status:'draft',createdAt:new Date().toISOString()})]);
+    return response(201,{draft:{customerId,productId,productName,status:'draft'}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/next-best-action/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT al.id,al.entity_id AS customer_id,al.data->>'productId' AS product_id,al.data->>'productName' AS product_name,al.created_at,
+      EXISTS(SELECT 1 FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE o.customer_id::text=al.entity_id AND oi.product_id::text=al.data->>'productId' AND o.paid_at>al.created_at) AS converted
+      FROM audit_log al WHERE al.action='ai.next_best_action_draft' ORDER BY al.created_at DESC LIMIT 100`)).rows;
+    return response(200,{items:rows,summary:{drafts:rows.length,converted:rows.filter(x=>x.converted).length}});
+  }
+
+  const retentionDraftMatch=url.match(/^\/api\/v1\/marketing\/customers\/([^/]+)\/retention-journey-draft$/);
+  if(method==='POST'&&retentionDraftMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const customerId=retentionDraftMatch[1],journey=cleanOptional(body.journey),reason=cleanLongText(body.reason,300);
+    const allowed=['maintenance_due','winback','vip_loyalty','repeat_growth','nurture'];
+    if(!allowed.includes(journey))return response(400,{error:'invalid_retention_journey'});
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.retention_journey_draft' AND entity_type='customer' AND entity_id=$1 AND data->>'journey'=$2 AND created_at>=now()-interval '30 days' LIMIT 1`,[customerId,journey])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    const messages={
+      maintenance_due:'تذكير بصيانة الجهاز أو الفلتر قبل الموعد أو بعد تجاوزه.',
+      winback:'إعادة تنشيط العميل بمحتوى وخدمة مناسبة دون خصم تلقائي.',
+      vip_loyalty:'اقتراح مزايا ولاء وإحالة وخدمة مميزة للعميل مرتفع القيمة.',
+      repeat_growth:'اقتراح Cross-sell أو Upsell مناسب بناءً على مشتريات العميل.',
+      nurture:'استمرار التواصل بالمحتوى المناسب حتى ظهور إشارة أقوى.'
+    };
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.retention_journey_draft','customer',$2,$3::jsonb)`,[context.userId,customerId,JSON.stringify({journey,reason,message:messages[journey],status:'draft',createdAt:new Date().toISOString()})]);
+    return response(201,{draft:{customerId,journey,reason,message:messages[journey],status:'draft'}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/retention/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT al.id,al.entity_id AS customer_id,al.data->>'journey' AS journey,al.created_at,
+      EXISTS(SELECT 1 FROM orders o WHERE o.customer_id::text=al.entity_id AND o.paid_at>al.created_at) AS converted
+      FROM audit_log al WHERE al.action='ai.retention_journey_draft' ORDER BY al.created_at DESC LIMIT 100`)).rows;
+    return response(200,{items:rows,summary:{drafts:rows.length,converted:rows.filter(x=>x.converted).length}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/retention-journeys'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`WITH base AS(
+      SELECT c.id,c.name,
+        COUNT(DISTINCT o.id)::integer AS orders,
+        COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
+        MAX(o.paid_at) AS last_order_at,
+        (SELECT MIN(a.next_maintenance_at) FROM installed_assets a WHERE a.customer_id=c.id AND a.status='active') AS next_maintenance_at
+      FROM customers c
+      LEFT JOIN orders o ON o.customer_id=c.id AND o.paid_at IS NOT NULL
+      GROUP BY c.id,c.name
+    )
+    SELECT * FROM base ORDER BY revenue DESC,last_order_at DESC NULLS LAST LIMIT 100`)).rows;
+    const journeys=rows.map(x=>{
+      const daysToMaintenance=x.next_maintenance_at?Math.ceil((new Date(x.next_maintenance_at).getTime()-Date.now())/86400000):null;
+      let journey='nurture',priority='low',reason='لا توجد إشارة أقوى حاليًا';
+      if(daysToMaintenance!=null&&daysToMaintenance<=30){journey='maintenance_due';priority=daysToMaintenance<0?'high':'medium';reason=daysToMaintenance<0?'الصيانة متأخرة':'الصيانة مستحقة خلال 30 يومًا';}
+      else if(x.last_order_at&&new Date(x.last_order_at).getTime()<Date.now()-180*86400000){journey='winback';priority='high';reason='لا يوجد طلب منذ أكثر من 180 يومًا';}
+      else if(x.last_order_at&&new Date(x.last_order_at).getTime()<Date.now()-90*86400000){journey='winback';priority='medium';reason='لا يوجد طلب منذ أكثر من 90 يومًا';}
+      else if(Number(x.orders)>=3||Number(x.revenue)>=3000){journey='vip_loyalty';priority='medium';reason='عميل مرتفع القيمة أو متكرر';}
+      else if(Number(x.orders)>=2){journey='repeat_growth';priority='medium';reason='عميل متكرر قابل للـCross-sell والولاء';}
+      return{customerId:String(x.id),name:x.name,orders:Number(x.orders||0),revenue:Number(x.revenue||0),lastOrderAt:x.last_order_at,nextMaintenanceAt:x.next_maintenance_at,journey,priority,reason};
+    });
+    const summary=journeys.reduce((a,x)=>{a[x.journey]=(a[x.journey]||0)+1;return a;},{});
+    return response(200,{journeys,summary});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/customer-360'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const customers=(await db.query(`WITH base AS(
+      SELECT c.id,c.name,
+        COUNT(DISTINCT o.id)::integer AS orders,
+        COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
+        MAX(o.paid_at) AS last_order_at,
+        MIN(o.paid_at) AS first_order_at,
+        COALESCE(AVG(o.total_ex_vat),0)::numeric(14,2) AS aov,
+        (SELECT MIN(a.next_maintenance_at) FROM installed_assets a WHERE a.customer_id=c.id AND a.status='active') AS next_maintenance_at,
+        (SELECT COUNT(*)::integer FROM installed_assets a WHERE a.customer_id=c.id AND a.status='active') AS active_assets
+      FROM customers c
+      LEFT JOIN orders o ON o.customer_id=c.id AND o.paid_at IS NOT NULL
+      GROUP BY c.id,c.name
+    )
+    SELECT *,
+      CASE
+        WHEN orders>=3 OR revenue>=3000 THEN 'VIP'
+        WHEN orders>=2 THEN 'repeat'
+        WHEN revenue>=2000 THEN 'high_value'
+        WHEN last_order_at<now()-interval '90 days' THEN 'dormant'
+        ELSE 'standard' END AS segment,
+      CASE
+        WHEN last_order_at IS NULL THEN 'unknown'
+        WHEN last_order_at<now()-interval '180 days' THEN 'high'
+        WHEN last_order_at<now()-interval '90 days' THEN 'medium'
+        ELSE 'low' END AS churn_risk,
+      CASE
+        WHEN orders=0 THEN 0
+        ELSE ROUND((revenue/orders)*GREATEST(orders,1)*CASE WHEN last_order_at>=now()-interval '90 days' THEN 1.35 WHEN last_order_at>=now()-interval '180 days' THEN 1.10 ELSE 0.80 END,2)
+      END AS estimated_ltv
+    FROM base
+    ORDER BY revenue DESC,last_order_at DESC NULLS LAST
+    LIMIT 50`)).rows;
+    const purchaseRows=(await db.query(`SELECT o.customer_id,oi.product_id,oi.product_name,SUM(oi.quantity)::numeric(14,2) AS units
+      FROM orders o JOIN order_items oi ON oi.order_id=o.id
+      WHERE o.paid_at IS NOT NULL
+      GROUP BY o.customer_id,oi.product_id,oi.product_name`)).rows;
+    const pairRows=(await db.query(`SELECT a.product_id AS a_id,a.product_name AS a_name,b.product_id AS b_id,b.product_name AS b_name,COUNT(DISTINCT a.order_id)::integer AS orders
+      FROM order_items a JOIN order_items b ON b.order_id=a.order_id AND b.product_id<>a.product_id
+      JOIN orders o ON o.id=a.order_id
+      WHERE o.paid_at IS NOT NULL AND a.product_id IS NOT NULL AND b.product_id IS NOT NULL
+      GROUP BY a.product_id,a.product_name,b.product_id,b.product_name
+      ORDER BY orders DESC`)).rows;
+    const owned=new Map(),topOwned=new Map();
+    for(const p of purchaseRows){
+      const key=String(p.customer_id),set=owned.get(key)||new Set();set.add(String(p.product_id));owned.set(key,set);
+      const cur=topOwned.get(key);if(!cur||Number(p.units)>Number(cur.units))topOwned.set(key,p);
+    }
+    const suggestions=customers.map(c=>{
+      const key=String(c.id),base=topOwned.get(key),seen=owned.get(key)||new Set();
+      let next=null;
+      if(base){
+        next=pairRows.find(p=>String(p.a_id)===String(base.product_id)&&!seen.has(String(p.b_id)))||null;
+      }
+      return{...c,nextBestProduct:next?{id:String(next.b_id),name:next.b_name,coOrders:Number(next.orders),basedOn:{id:String(base.product_id),name:base.product_name}}:null};
+    });
+    const segments={VIP:0,repeat:0,high_value:0,dormant:0,standard:0};
+    for(const x of suggestions)segments[x.segment]=(segments[x.segment]||0)+1;
+    return response(200,{customers:suggestions,segments});
+  }
+
+  const profitDraftMatch=url.match(/^\/api\/v1\/marketing\/products\/([^/]+)\/profit-action-draft$/);
+  if(method==='POST'&&profitDraftMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const productId=profitDraftMatch[1],action=cleanOptional(body.action),productName=cleanLongText(body.productName,200),reason=cleanLongText(body.reason,500);
+    const allowed=['push_cross_sell','feature_in_bundles','review_before_spend','monitor'];
+    if(!allowed.includes(action)||!productName)return response(400,{error:'invalid_profit_action'});
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.profit_action_draft' AND entity_type='woocommerce_product' AND entity_id=$1 AND data->>'action'=$2 AND created_at>=now()-interval '30 days' LIMIT 1`,[productId,action])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.profit_action_draft','woocommerce_product',$2,$3::jsonb)`,[context.userId,productId,JSON.stringify({action,productName,reason,status:'draft',createdAt:new Date().toISOString()})]);
+    return response(201,{draft:{productId,productName,action,reason,status:'draft'}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/profit-actions/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT al.id,al.entity_id AS product_id,al.data->>'productName' AS product_name,al.data->>'action' AS action,al.created_at,
+      COALESCE((SELECT SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot)) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.product_id::text=al.entity_id AND o.paid_at>al.created_at),0)::numeric(14,2) AS profit_after,
+      COALESCE((SELECT COUNT(DISTINCT o.id) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.product_id::text=al.entity_id AND o.paid_at>al.created_at),0)::integer AS orders_after
+      FROM audit_log al WHERE al.action='ai.profit_action_draft' ORDER BY al.created_at DESC LIMIT 100`)).rows;
+    return response(200,{items:rows,summary:{drafts:rows.length,withOrders:rows.filter(x=>Number(x.orders_after)>0).length,profitAfter:rows.reduce((s,x)=>s+Number(x.profit_after||0),0)}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/profit-decisions'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const products=(await db.query(`SELECT oi.product_id,oi.product_name,
+      SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
+      SUM(oi.quantity*oi.unit_cost_snapshot)::numeric(14,2) AS cost,
+      SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot))::numeric(14,2) AS gross_profit,
+      COUNT(DISTINCT oi.order_id)::integer AS orders
+      FROM order_items oi JOIN orders o ON o.id=oi.order_id
+      WHERE o.paid_at>=now()-interval '90 days'
+      GROUP BY oi.product_id,oi.product_name`)).rows;
+    const decisions=products.map(x=>{
+      const revenue=Number(x.revenue||0),profit=Number(x.gross_profit||0),margin=revenue?profit/revenue*100:0;
+      let action='monitor',priority='low',reason='الهامش والحجم لا يتطلبان إجراء خاصًا.';
+      if(margin>=35&&Number(x.orders)>=3){action='push_cross_sell';priority='high';reason='هامش قوي مع طلب متكرر؛ مناسب لتعزيز Cross-sell وUpsell.';}
+      else if(margin<15&&revenue>0){action='review_before_spend';priority='high';reason='هامش منخفض؛ يفضل مراجعة التكلفة/السعر قبل زيادة الإنفاق أو الخصومات.';}
+      else if(margin>=25&&Number(x.orders)>=2){action='feature_in_bundles';priority='medium';reason='هامش جيد؛ مناسب للباقات والمنتج التالي المقترح.';}
+      return{productId:String(x.product_id||''),name:x.product_name,revenue,profit,margin,orders:Number(x.orders||0),action,priority,reason};
+    }).sort((a,b)=>({high:0,medium:1,low:2}[a.priority]-({high:0,medium:1,low:2}[b.priority]))||b.profit-a.profit);
+    return response(200,{decisions,summary:{
+      pushCrossSell:decisions.filter(x=>x.action==='push_cross_sell').length,
+      reviewBeforeSpend:decisions.filter(x=>x.action==='review_before_spend').length,
+      featureInBundles:decisions.filter(x=>x.action==='feature_in_bundles').length
+    }});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/channel-decisions'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const channels=(await db.query(`WITH order_profit AS(
+      SELECT o.id,o.total_ex_vat,(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS net_profit
+      FROM orders o
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity*unit_cost_snapshot),0) AS product_cost FROM order_items WHERE order_id=o.id)items ON true
+      LEFT JOIN order_costs oc ON oc.order_id=o.id
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(ts.payout_amount)FILTER(WHERE ts.status<>'rejected'),0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id=j.id WHERE j.order_id=o.id)pay ON true
+      WHERE o.paid_at>=now()-interval '90 days'
+    ), attributed AS(
+      SELECT op.id,op.total_ex_vat,op.net_profit,COALESCE(NULLIF(mt.source,''),'(direct)') AS source
+      FROM order_profit op LEFT JOIN order_attribution oa ON oa.order_id=op.id LEFT JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+    ), spend AS(
+      SELECT source,COALESCE(SUM(amount),0)::numeric(14,2) AS spend FROM marketing_spend WHERE spent_on>=current_date-interval '90 days' GROUP BY source
+    )
+    SELECT a.source,COUNT(DISTINCT a.id)::integer AS orders,COALESCE(SUM(a.total_ex_vat),0)::numeric(14,2) AS revenue,
+      COALESCE(SUM(a.net_profit),0)::numeric(14,2) AS profit,COALESCE(MAX(s.spend),0)::numeric(14,2) AS spend
+    FROM attributed a LEFT JOIN spend s ON s.source=a.source GROUP BY a.source`)).rows;
+    const decisions=channels.map(x=>{
+      const revenue=Number(x.revenue||0),profit=Number(x.profit||0),spend=Number(x.spend||0),margin=revenue?profit/revenue*100:0,profitRoas=spend>0?profit/spend:null;
+      let action='monitor',priority='low',reason='لا توجد إشارة قوية تستدعي إجراء خاصًا.';
+      if(x.source==='(direct)'){action='fix_attribution';priority='medium';reason='نسبة كبيرة من الطلبات منسوبة Direct؛ تحسين UTM والإسناد سيعطي رؤية أدق.';}
+      else if(spend>0&&profitRoas!=null&&profitRoas<1){action='review_spend';priority='high';reason='الربح المنسوب أقل من الإنفاق المسجل؛ راجع القناة قبل زيادة الميزانية.';}
+      else if(profit>0&&margin>=25&&Number(x.orders)>=3){action='scale_focus';priority='high';reason='القناة تحقق ربحًا وهامشًا جيدًا مع حجم طلبات مناسب؛ تستحق مزيدًا من التركيز.';}
+      else if(revenue>0&&margin<15){action='optimize_offer';priority='medium';reason='القناة تجلب إيرادًا لكن الهامش منخفض؛ راجع العرض والمنتج قبل التوسع.';}
+      return{source:x.source,orders:Number(x.orders||0),revenue,profit,margin,spend,profitRoas,action,priority,reason};
+    }).sort((a,b)=>({high:0,medium:1,low:2}[a.priority]-({high:0,medium:1,low:2}[b.priority]))||b.profit-a.profit);
+    return response(200,{decisions,summary:{
+      scaleFocus:decisions.filter(x=>x.action==='scale_focus').length,
+      reviewSpend:decisions.filter(x=>x.action==='review_spend').length,
+      fixAttribution:decisions.filter(x=>x.action==='fix_attribution').length,
+      optimizeOffer:decisions.filter(x=>x.action==='optimize_offer').length
+    }});
+  }
+
+  const channelDraftMatch=url.match(/^\/api\/v1\/marketing\/channels\/([^/]+)\/decision-draft$/);
+  if(method==='POST'&&channelDraftMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const source=decodeURIComponent(channelDraftMatch[1]),action=cleanOptional(body.action),reason=cleanLongText(body.reason,500);
+    const allowed=['scale_focus','review_spend','fix_attribution','optimize_offer','monitor'];
+    if(!allowed.includes(action))return response(400,{error:'invalid_channel_action'});
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.channel_decision_draft' AND entity_type='marketing_channel' AND entity_id=$1 AND data->>'action'=$2 AND created_at>=now()-interval '30 days' LIMIT 1`,[source,action])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.channel_decision_draft','marketing_channel',$2,$3::jsonb)`,[context.userId,source,JSON.stringify({action,reason,status:'draft',createdAt:new Date().toISOString()})]);
+    return response(201,{draft:{source,action,reason,status:'draft'}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/channel-decisions/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT al.id,al.entity_id AS source,al.data->>'action' AS action,al.created_at,
+      COALESCE((SELECT SUM(o.total_ex_vat) FROM orders o JOIN order_attribution oa ON oa.order_id=o.id JOIN marketing_touches mt ON mt.id=oa.last_touch_id WHERE COALESCE(NULLIF(mt.source,''),'(direct)')=al.entity_id AND o.paid_at>al.created_at),0)::numeric(14,2) AS revenue_after
+      FROM audit_log al WHERE al.action='ai.channel_decision_draft' ORDER BY al.created_at DESC LIMIT 100`)).rows;
+    return response(200,{items:rows,summary:{drafts:rows.length,withRevenue:rows.filter(x=>Number(x.revenue_after)>0).length,revenueAfter:rows.reduce((s,x)=>s+Number(x.revenue_after||0),0)}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/channel-profitability'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const channels=(await db.query(`WITH order_profit AS(
+      SELECT o.id,o.total_ex_vat,
+        (o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout)::numeric(14,2) AS net_profit
+      FROM orders o
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity*unit_cost_snapshot),0) AS product_cost FROM order_items WHERE order_id=o.id)items ON true
+      LEFT JOIN order_costs oc ON oc.order_id=o.id
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(ts.payout_amount)FILTER(WHERE ts.status<>'rejected'),0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id=j.id WHERE j.order_id=o.id)pay ON true
+      WHERE o.paid_at>=now()-interval '90 days'
+    ), attributed AS(
+      SELECT op.id,op.total_ex_vat,op.net_profit,COALESCE(NULLIF(mt.source,''),'(direct)') AS source
+      FROM order_profit op
+      LEFT JOIN order_attribution oa ON oa.order_id=op.id
+      LEFT JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+    ), spend AS(
+      SELECT source,COALESCE(SUM(amount),0)::numeric(14,2) AS spend
+      FROM marketing_spend
+      WHERE spent_on>=current_date-interval '90 days'
+      GROUP BY source
+    )
+    SELECT a.source,
+      COUNT(DISTINCT a.id)::integer AS orders,
+      COALESCE(SUM(a.total_ex_vat),0)::numeric(14,2) AS revenue,
+      COALESCE(SUM(a.net_profit),0)::numeric(14,2) AS profit,
+      COALESCE(MAX(s.spend),0)::numeric(14,2) AS spend
+    FROM attributed a LEFT JOIN spend s ON s.source=a.source
+    GROUP BY a.source
+    ORDER BY profit DESC`)).rows.map(x=>{
+      const revenue=Number(x.revenue||0),profit=Number(x.profit||0),spend=Number(x.spend||0),margin=revenue?profit/revenue*100:0;
+      const roas=spend>0?revenue/spend:null,profitRoas=spend>0?profit/spend:null;
+      let status='healthy',note='القناة تحقق مساهمة ربحية مقبولة.';
+      if(revenue>0&&margin<15){status='low_margin';note='الإيراد موجود لكن هامش الربح منخفض.';}
+      if(spend>0&&profitRoas!=null&&profitRoas<1){status='unprofitable_spend';note='الربح المنسوب أقل من الإنفاق المسجل على القناة.';}
+      if(spend===0){status='no_spend_data';note='لا يوجد إنفاق مسجل؛ لا يمكن احتساب ROAS بدقة.';}
+      return{source:x.source,orders:Number(x.orders||0),revenue,profit,margin,spend,roas,profitRoas,status,note};
+    });
+    return response(200,{channels,summary:{
+      profitable:channels.filter(x=>x.profit>0).length,
+      lowMargin:channels.filter(x=>x.status==='low_margin').length,
+      unprofitableSpend:channels.filter(x=>x.status==='unprofitable_spend').length,
+      missingSpend:channels.filter(x=>x.status==='no_spend_data').length
+    }});
+  }
+
+  const bundleDraftMatch=url.match(/^\/api\/v1\/marketing\/bundles\/([^/]+)\/([^/]+)\/bundle-action-draft$/);
+  if(method==='POST'&&bundleDraftMatch){
+    if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});
+    if(!context.userId)return response(401,{error:'user_identity_required'});
+    const aId=bundleDraftMatch[1],bId=bundleDraftMatch[2],action=cleanOptional(body.action),aName=cleanLongText(body.aName,200),bName=cleanLongText(body.bName,200),reason=cleanLongText(body.reason,500);
+    const allowed=['bundle_candidate','test_bundle','review_bundle_margin','monitor'];
+    if(!allowed.includes(action)||!aName||!bName)return response(400,{error:'invalid_bundle_action'});
+    const key=[aId,bId].sort().join('|');
+    const existing=(await db.query(`SELECT id FROM audit_log WHERE action='ai.bundle_action_draft' AND entity_type='product_bundle' AND entity_id=$1 AND data->>'action'=$2 AND created_at>=now()-interval '30 days' LIMIT 1`,[key,action])).rows[0];
+    if(existing)return response(200,{duplicate:true});
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.bundle_action_draft','product_bundle',$2,$3::jsonb)`,[context.userId,key,JSON.stringify({aId,bId,aName,bName,action,reason,status:'draft',createdAt:new Date().toISOString()})]);
+    return response(201,{draft:{bundleKey:key,aId,bId,aName,bName,action,reason,status:'draft'}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/bundle-actions/effectiveness'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT al.id,al.entity_id AS bundle_key,al.data->>'aId' AS a_id,al.data->>'bId' AS b_id,al.data->>'aName' AS a_name,al.data->>'bName' AS b_name,al.data->>'action' AS action,al.created_at,
+      COALESCE((SELECT COUNT(DISTINCT o.id) FROM orders o JOIN order_items a ON a.order_id=o.id JOIN order_items b ON b.order_id=o.id AND b.product_id::text=al.data->>'bId' WHERE a.product_id::text=al.data->>'aId' AND o.paid_at>al.created_at),0)::integer AS orders_after,
+      COALESCE((SELECT SUM((a.subtotal_ex_vat-(a.quantity*a.unit_cost_snapshot))+(b.subtotal_ex_vat-(b.quantity*b.unit_cost_snapshot))) FROM orders o JOIN order_items a ON a.order_id=o.id JOIN order_items b ON b.order_id=o.id AND b.product_id::text=al.data->>'bId' WHERE a.product_id::text=al.data->>'aId' AND o.paid_at>al.created_at),0)::numeric(14,2) AS profit_after
+      FROM audit_log al WHERE al.action='ai.bundle_action_draft' ORDER BY al.created_at DESC LIMIT 100`)).rows;
+    return response(200,{items:rows,summary:{drafts:rows.length,withOrders:rows.filter(x=>Number(x.orders_after)>0).length,profitAfter:rows.reduce((s,x)=>s+Number(x.profit_after||0),0)}});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/bundle-profitability'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`WITH paid_items AS(
+      SELECT o.id AS order_id,o.total_ex_vat,oi.product_id,oi.product_name,oi.subtotal_ex_vat,
+        (oi.quantity*oi.unit_cost_snapshot)::numeric(14,2) AS product_cost
+      FROM orders o JOIN order_items oi ON oi.order_id=o.id
+      WHERE o.paid_at>=now()-interval '90 days'
+    ), pairs AS(
+      SELECT a.product_id AS a_id,a.product_name AS a_name,b.product_id AS b_id,b.product_name AS b_name,
+        COUNT(DISTINCT a.order_id)::integer AS orders,
+        SUM(a.subtotal_ex_vat+b.subtotal_ex_vat)::numeric(14,2) AS pair_revenue,
+        SUM((a.subtotal_ex_vat-a.product_cost)+(b.subtotal_ex_vat-b.product_cost))::numeric(14,2) AS pair_profit,
+        AVG(o.total_ex_vat)::numeric(14,2) AS avg_order
+      FROM paid_items a
+      JOIN paid_items b ON b.order_id=a.order_id AND b.product_id>a.product_id
+      JOIN orders o ON o.id=a.order_id
+      GROUP BY a.product_id,a.product_name,b.product_id,b.product_name
+    )
+    SELECT * FROM pairs ORDER BY orders DESC,pair_profit DESC LIMIT 30`)).rows.map(x=>{
+      const revenue=Number(x.pair_revenue||0),profit=Number(x.pair_profit||0),margin=revenue?profit/revenue*100:0;
+      let action='monitor',priority='low',reason='التركيبة تحتاج بيانات أكثر قبل تحويلها لباقـة.';
+      if(Number(x.orders)>=2&&margin>=30){action='bundle_candidate';priority='high';reason='التركيبة تتكرر بهامش قوي؛ مناسبة كباقة أو Cross-sell بارز.';}
+      else if(Number(x.orders)>=2&&margin<15){action='review_bundle_margin';priority='high';reason='التركيبة تتكرر لكن هامشها منخفض؛ راجع التسعير والتكلفة قبل الترويج.';}
+      else if(Number(x.orders)>=2&&margin>=20){action='test_bundle';priority='medium';reason='التركيبة واعدة وتستحق اختبار باقة دون خصم تلقائي.';}
+      return{...x,orders:Number(x.orders||0),pairRevenue:revenue,pairProfit:profit,margin,avgOrder:Number(x.avg_order||0),action,priority,reason};
+    });
+    return response(200,{bundles:rows,summary:{
+      candidates:rows.filter(x=>x.action==='bundle_candidate').length,
+      tests:rows.filter(x=>x.action==='test_bundle').length,
+      lowMargin:rows.filter(x=>x.action==='review_bundle_margin').length
+    }});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/profit-intelligence'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const summary=(await db.query(`SELECT
+      COUNT(*)::integer AS orders,
+      COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
+      COALESCE(SUM(items.product_cost),0)::numeric(14,2) AS product_cost,
+      COALESCE(SUM(COALESCE(oc.other_costs,0)),0)::numeric(14,2) AS other_costs,
+      COALESCE(SUM(pay.payout),0)::numeric(14,2) AS technician_payout,
+      COALESCE(SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout),0)::numeric(14,2) AS net_profit
+      FROM orders o
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity*unit_cost_snapshot),0) AS product_cost FROM order_items WHERE order_id=o.id)items ON true
+      LEFT JOIN order_costs oc ON oc.order_id=o.id
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(ts.payout_amount)FILTER(WHERE ts.status<>'rejected'),0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id=j.id WHERE j.order_id=o.id)pay ON true
+      WHERE o.paid_at>=now()-interval '90 days'`)).rows[0]||{};
+    const products=(await db.query(`SELECT oi.product_id,oi.product_name,
+      SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
+      SUM(oi.quantity*oi.unit_cost_snapshot)::numeric(14,2) AS product_cost,
+      SUM(oi.subtotal_ex_vat-(oi.quantity*oi.unit_cost_snapshot))::numeric(14,2) AS gross_profit
+      FROM order_items oi JOIN orders o ON o.id=oi.order_id
+      WHERE o.paid_at>=now()-interval '90 days'
+      GROUP BY oi.product_id,oi.product_name
+      ORDER BY gross_profit DESC LIMIT 20`)).rows;
+    const revenue=Number(summary.revenue||0),profit=Number(summary.net_profit||0),margin=revenue?profit/revenue*100:0;
+    const dailyProfit90=profit/90,dailyProfit30=Number((await db.query(`SELECT COALESCE(SUM(o.total_ex_vat-items.product_cost-COALESCE(oc.other_costs,0)-pay.payout),0)::numeric(14,2) AS net_profit
+      FROM orders o
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity*unit_cost_snapshot),0) AS product_cost FROM order_items WHERE order_id=o.id)items ON true
+      LEFT JOIN order_costs oc ON oc.order_id=o.id
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(ts.payout_amount)FILTER(WHERE ts.status<>'rejected'),0) AS payout FROM service_jobs j JOIN technician_settlements ts ON ts.job_id=j.id WHERE j.order_id=o.id)pay ON true
+      WHERE o.paid_at>=now()-interval '30 days'`)).rows[0]?.net_profit||0)/30;
+    const blended=(dailyProfit30*0.65)+(dailyProfit90*0.35);
+    const risks=products.filter(x=>Number(x.revenue)>0&&Number(x.gross_profit)/Number(x.revenue)*100<15).slice(0,5).map(x=>({productId:x.product_id,name:x.product_name,margin:Number(x.gross_profit)/Number(x.revenue)*100}));
+    return response(200,{summary:{...summary,margin},forecast:{days30:blended*30,days90:blended*90},products,risks});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/revenue-forecast'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [r30,r90,topCustomer,topProduct,total90]=await Promise.all([
+      db.query(`SELECT COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue,COUNT(*)::integer AS orders FROM orders WHERE paid_at>=now()-interval '30 days'`),
+      db.query(`SELECT COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue,COUNT(*)::integer AS orders FROM orders WHERE paid_at>=now()-interval '90 days'`),
+      db.query(`SELECT c.id,c.name,COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue FROM customers c JOIN orders o ON o.customer_id=c.id WHERE o.paid_at>=now()-interval '90 days' GROUP BY c.id,c.name ORDER BY revenue DESC LIMIT 1`),
+      db.query(`SELECT oi.product_id,oi.product_name,COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.paid_at>=now()-interval '90 days' GROUP BY oi.product_id,oi.product_name ORDER BY revenue DESC LIMIT 1`),
+      db.query(`SELECT COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue FROM orders WHERE paid_at>=now()-interval '90 days'`)
+    ]);
+    const rev30=Number(r30.rows[0]?.revenue||0),rev90=Number(r90.rows[0]?.revenue||0),daily30=rev30/30,daily90=rev90/90;
+    const blended=(daily30*0.65)+(daily90*0.35),forecast30=blended*30,forecast90=blended*90,total=Number(total90.rows[0]?.revenue||0);
+    const tc=topCustomer.rows[0]||null,tp=topProduct.rows[0]||null;
+    const customerShare=tc&&total?Number(tc.revenue)/total*100:0,productShare=tp&&total?Number(tp.revenue)/total*100:0;
+    const risks=[];
+    if(customerShare>35)risks.push({type:'customer_concentration',priority:'high',message:`أعلى عميل يمثل ${customerShare.toFixed(1)}% من إيراد آخر 90 يومًا.`});
+    if(productShare>50)risks.push({type:'product_concentration',priority:'high',message:`أعلى منتج يمثل ${productShare.toFixed(1)}% من إيراد آخر 90 يومًا.`});
+    if(daily30<daily90*0.8&&rev90>0)risks.push({type:'revenue_slowdown',priority:'medium',message:'متوسط الإيراد اليومي آخر 30 يومًا أقل بأكثر من 20% من متوسط 90 يومًا.'});
+    return response(200,{actual:{revenue30:rev30,revenue90:rev90,orders30:Number(r30.rows[0]?.orders||0),orders90:Number(r90.rows[0]?.orders||0),daily30,daily90},forecast:{days30:forecast30,days90:forecast90,method:'65% last30 + 35% last90 daily average'},concentration:{topCustomer:tc?{...tc,share:customerShare}:null,topProduct:tp?{...tp,share:productShare}:null},risks});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/revenue-intelligence'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const [summary,products,channels,segments]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS orders,COALESCE(SUM(total_ex_vat),0)::numeric(14,2) AS revenue,
+        COALESCE(AVG(total_ex_vat),0)::numeric(14,2) AS aov
+        FROM orders WHERE paid_at>=now()-interval '90 days'`),
+      db.query(`SELECT oi.product_id,oi.product_name,SUM(oi.quantity)::numeric(14,2) AS units,
+        SUM(oi.subtotal_ex_vat)::numeric(14,2) AS revenue,
+        COUNT(DISTINCT oi.order_id)::integer AS orders
+        FROM order_items oi JOIN orders o ON o.id=oi.order_id
+        WHERE o.paid_at>=now()-interval '90 days'
+        GROUP BY oi.product_id,oi.product_name ORDER BY revenue DESC LIMIT 20`),
+      db.query(`SELECT COALESCE(NULLIF(mt.source,''),'(direct)') AS source,
+        COUNT(DISTINCT oa.order_id)::integer AS orders,
+        COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue
+        FROM order_attribution oa JOIN orders o ON o.id=oa.order_id JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+        WHERE o.paid_at>=now()-interval '90 days'
+        GROUP BY COALESCE(NULLIF(mt.source,''),'(direct)') ORDER BY revenue DESC`),
+      db.query(`WITH spend AS(
+        SELECT c.id,c.name,COUNT(o.id)::integer AS orders,COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue,
+          MAX(o.paid_at) AS last_order_at
+        FROM customers c LEFT JOIN orders o ON o.customer_id=c.id AND o.paid_at>=now()-interval '365 days'
+        GROUP BY c.id,c.name
+      )
+      SELECT CASE
+        WHEN orders>=3 OR revenue>=3000 THEN 'VIP'
+        WHEN orders>=2 THEN 'repeat'
+        WHEN revenue>=2000 THEN 'high_value'
+        WHEN last_order_at<now()-interval '90 days' THEN 'dormant'
+        ELSE 'standard' END AS segment,
+        COUNT(*)::integer AS customers,COALESCE(SUM(revenue),0)::numeric(14,2) AS revenue
+      FROM spend GROUP BY 1 ORDER BY revenue DESC`)
+    ]);
+    const s=summary.rows[0]||{orders:0,revenue:0,aov:0};
+    const alerts=[];
+    if(Number(s.orders)>0&&Number(s.aov)<300)alerts.push({type:'aov_low',priority:'medium',message:'متوسط قيمة الطلب أقل من 300 ر.س خلال آخر 90 يومًا.'});
+    if((channels.rows||[]).length===0)alerts.push({type:'attribution_gap',priority:'high',message:'لا توجد قنوات منسوبة للمبيعات في الفترة الحالية.'});
+    const dominant=products.rows?.[0];
+    if(dominant&&Number(s.revenue)>0&&Number(dominant.revenue)/Number(s.revenue)>0.5)alerts.push({type:'product_concentration',priority:'medium',message:`أكثر من 50% من الإيراد يعتمد على المنتج: ${dominant.product_name}`});
+    return response(200,{summary:s,products:products.rows,channels:channels.rows,segments:segments.rows,alerts});
+  }
+
+  if(method==='GET'&&url==='/api/v1/marketing/content-attribution'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const rows=(await db.query(`SELECT
+      COALESCE(NULLIF(mt.content,''),'(بدون محتوى)') AS content,
+      mt.source,
+      mt.medium,
+      mt.campaign,
+      COUNT(DISTINCT oa.order_id)::integer AS orders,
+      COALESCE(SUM(o.total_ex_vat),0)::numeric(14,2) AS revenue
+      FROM order_attribution oa
+      JOIN orders o ON o.id=oa.order_id
+      JOIN marketing_touches mt ON mt.id=oa.last_touch_id
+      WHERE o.paid_at>=now()-interval '90 days'
+      GROUP BY mt.content,mt.source,mt.medium,mt.campaign
+      ORDER BY revenue DESC,orders DESC
+      LIMIT 50`)).rows;
+    return response(200,{attribution:rows});
+  }
 
   if(method==='GET'&&url==='/api/v1/marketing/attribution'){if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});const range=parseDateRange(context.from,context.to);if(!range)return response(400,{error:'invalid_date_range'});return response(200,{...(await createRepositories(db).marketing.attribution(range.from,range.to)),range});}
   if(method==='POST'&&url==='/api/v1/marketing/touches'){if(!can(role,'marketing:update'))return response(403,{error:'forbidden'});const visitorId=cleanOptional(body.visitorId),customerId=cleanOptional(body.customerId),source=cleanOptional(body.source),medium=cleanOptional(body.medium),campaign=cleanOptional(body.campaign),content=cleanOptional(body.content),term=cleanOptional(body.term),landingUrl=cleanOptional(body.landingUrl),occurredAt=body.occurredAt?parseDate(body.occurredAt):new Date().toISOString();if((!visitorId&&!customerId)||!source||source.length>100||medium.length>100||campaign.length>200||content.length>200||term.length>200||landingUrl.length>2000||!occurredAt)return response(400,{error:'invalid_marketing_touch'});return response(201,{touch:await recordTouch(db,{visitorId,customerId,source,medium,campaign,content,term,landingUrl,occurredAt})});}

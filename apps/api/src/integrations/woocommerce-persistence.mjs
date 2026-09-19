@@ -1,20 +1,43 @@
-import { customerIdentityFromOrder, serviceJobFromPaidOrder } from './woocommerce-order.mjs';
+import { customerIdentityFromOrder, serviceJobFromPaidOrder, extractOrderAttribution } from './woocommerce-order.mjs';
 import { withTransaction } from '../persistence/transactions.mjs';
 
 const DEFAULT_ORG = '00000000-0000-4000-8000-000000000001';
 
 export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh', organizationId = DEFAULT_ORG } = {}) {
+  if (!['processing','completed'].includes(order?.status)) throw new Error('Order must be paid before creating a service job');
   const mapped = serviceJobFromPaidOrder(order);
-  if (!mapped) return { serviceRequired: false, job: null };
   const identity = customerIdentityFromOrder(order);
+  const attribution = extractOrderAttribution(order);
 
   return withTransaction(db, async (client) => {
-    const existing = await client.query(
-      `SELECT j.* FROM service_jobs j JOIN orders o ON o.id = j.order_id
-       WHERE o.organization_id=$1 AND o.external_source = 'woocommerce' AND o.external_order_id = $2 LIMIT 1`,
+    const existingOrder = (await client.query(
+      `SELECT * FROM orders WHERE organization_id=$1 AND external_source='woocommerce' AND external_order_id=$2 LIMIT 1`,
       [organizationId, String(order.id)]
-    );
-    if (existing.rows[0]) return { serviceRequired: true, duplicate: true, job: existing.rows[0] };
+    )).rows[0];
+    if (existingOrder) {
+      const paidAt=(order.date_paid_gmt||order.date_paid||order.date_completed_gmt||order.date_completed||existingOrder.paid_at||new Date().toISOString());
+      const refreshed=(await client.query(
+        `UPDATE orders SET paid_at=$2,total_ex_vat=$3 WHERE id=$1 RETURNING *`,
+        [existingOrder.id,paidAt,Number(order.total||0)/1.15]
+      )).rows[0];
+      if(attribution.meaningful){
+        const hasAttribution=(await client.query('SELECT 1 FROM order_attribution WHERE order_id=$1 LIMIT 1',[existingOrder.id])).rows[0];
+        if(!hasAttribution){
+          const touch=(await client.query(
+            `INSERT INTO marketing_touches(visitor_id,customer_id,source,medium,campaign,content,term,landing_url,occurred_at)
+             VALUES(NULL,$1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+            [existingOrder.customer_id,attribution.source,attribution.medium,attribution.campaign,attribution.content,attribution.term,attribution.landingUrl,attribution.occurredAt]
+          )).rows[0];
+          await client.query(
+            `INSERT INTO order_attribution(order_id,first_touch_id,last_touch_id) VALUES($1,$2,$2)
+             ON CONFLICT(order_id) DO NOTHING`,
+            [existingOrder.id,touch.id]
+          );
+        }
+      }
+      const existingJob=(await client.query('SELECT * FROM service_jobs WHERE order_id=$1 LIMIT 1',[existingOrder.id])).rows[0]||null;
+      return { serviceRequired:Boolean(existingJob), duplicate:true, order:refreshed, job:existingJob, attribution:attribution.meaningful?attribution:null };
+    }
 
     let customer = (await client.query(
       `SELECT c.* FROM customers c JOIN customer_external_identities i ON i.customer_id=c.id
@@ -25,7 +48,7 @@ export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh', or
     if (!customer) {
       customer = (await client.query(
         `INSERT INTO customers (name,organization_id) VALUES ($1,$2) RETURNING *`,
-        [mapped.customer.name, organizationId]
+        [([order.billing?.first_name,order.billing?.last_name].filter(Boolean).join(' ').trim()||identity.email||identity.phone||`عميل WooCommerce ${order.id}`), organizationId]
       )).rows[0];
       await client.query(
         `INSERT INTO customer_external_identities (customer_id, source, identity_key, external_customer_id, organization_id)
@@ -34,18 +57,12 @@ export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh', or
       );
     }
 
-    const serviceLocation = (await client.query(
-      `INSERT INTO service_locations (customer_id, city_id, address_text)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [customer.id, cityId, [mapped.serviceLocation.address1, mapped.serviceLocation.address2, mapped.serviceLocation.city].filter(Boolean).join(', ')]
-    )).rows[0];
-
     const persistedOrder = (await client.query(
       `INSERT INTO orders (external_source, external_order_id, customer_id, paid_at, total_ex_vat, organization_id)
-       VALUES ('woocommerce', $1, $2, now(), $3, $4)
+       VALUES ('woocommerce', $1, $2, $5, $3, $4)
        ON CONFLICT (organization_id, external_source, external_order_id) DO UPDATE SET customer_id=EXCLUDED.customer_id
        RETURNING *`,
-      [String(order.id), customer.id, Number(order.total || 0) / 1.15, organizationId]
+      [String(order.id), customer.id, Number(order.total || 0) / 1.15, organizationId, (order.date_paid_gmt||order.date_paid||order.date_completed_gmt||order.date_completed||new Date().toISOString())]
     )).rows[0];
 
     for (const item of order.line_items || []) {
@@ -77,22 +94,49 @@ export async function persistPaidServiceOrder(db, order, { cityId = 'riyadh', or
       [persistedOrder.id, productCost]
     );
 
-    const job = (await client.query(
-      `INSERT INTO service_jobs
-         (order_id, customer_id, service_location_id, city_id, status, organization_id, required_skill_code, service_duration_minutes)
-       VALUES ($1, $2, $3, $4, 'pending_assignment', $5, $6, $7) RETURNING *`,
-      [persistedOrder.id, customer.id, serviceLocation.id, cityId, organizationId, mapped.requiredSkillCode, mapped.serviceDurationMinutes]
-    )).rows[0];
+    let job=null;
+    if(mapped){
+      const serviceLocation = (await client.query(
+        `INSERT INTO service_locations (customer_id, city_id, address_text)
+         VALUES ($1, $2, $3) RETURNING *`,
+        [customer.id, cityId, [mapped.serviceLocation.address1, mapped.serviceLocation.address2, mapped.serviceLocation.city].filter(Boolean).join(', ')]
+      )).rows[0];
+      job = (await client.query(
+        `INSERT INTO service_jobs
+           (order_id, customer_id, service_location_id, city_id, status, organization_id, required_skill_code, service_duration_minutes)
+         VALUES ($1, $2, $3, $4, 'pending_assignment', $5, $6, $7) RETURNING *`,
+        [persistedOrder.id, customer.id, serviceLocation.id, cityId, organizationId, mapped.requiredSkillCode, mapped.serviceDurationMinutes]
+      )).rows[0];
+      await client.query(
+        `INSERT INTO audit_log (action, entity_type, entity_id, data)
+         VALUES ('woocommerce.service_job_created', 'service_job', $1, $2::jsonb)`,
+        [job.id, JSON.stringify({
+          externalOrderId: String(order.id), identityKey: identity.identityKey, organizationId,
+          productCost, requiredSkillCode: mapped.requiredSkillCode, serviceDurationMinutes: mapped.serviceDurationMinutes
+        })]
+      );
+    }
+
+    if(attribution.meaningful){
+      const touch=(await client.query(
+        `INSERT INTO marketing_touches(visitor_id,customer_id,source,medium,campaign,content,term,landing_url,occurred_at)
+         VALUES(NULL,$1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [customer.id,attribution.source,attribution.medium,attribution.campaign,attribution.content,attribution.term,attribution.landingUrl,attribution.occurredAt]
+      )).rows[0];
+      await client.query(
+        `INSERT INTO order_attribution(order_id,first_touch_id,last_touch_id)
+         VALUES($1,$2,$2)
+         ON CONFLICT(order_id) DO UPDATE SET first_touch_id=EXCLUDED.first_touch_id,last_touch_id=EXCLUDED.last_touch_id,attributed_at=now()`,
+        [persistedOrder.id,touch.id]
+      );
+    }
 
     await client.query(
       `INSERT INTO audit_log (action, entity_type, entity_id, data)
-       VALUES ('woocommerce.service_job_created', 'service_job', $1, $2::jsonb)`,
-      [job.id, JSON.stringify({
-        externalOrderId: String(order.id), identityKey: identity.identityKey, organizationId,
-        productCost, requiredSkillCode: mapped.requiredSkillCode, serviceDurationMinutes: mapped.serviceDurationMinutes
-      })]
+       VALUES ('woocommerce.order_persisted', 'order', $1, $2::jsonb)`,
+      [persistedOrder.id, JSON.stringify({externalOrderId:String(order.id),organizationId,serviceRequired:Boolean(job),attribution:attribution.meaningful?attribution:null})]
     );
 
-    return { serviceRequired: true, duplicate: false, customer, order: persistedOrder, job, productCost };
+    return { serviceRequired:Boolean(job), duplicate:false, customer, order:persistedOrder, job, productCost, attribution:attribution.meaningful?attribution:null };
   });
 }

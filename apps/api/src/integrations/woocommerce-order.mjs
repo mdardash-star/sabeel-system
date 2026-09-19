@@ -70,3 +70,17 @@ export function serviceJobFromPaidOrder(order, options = {}) {
     items: serviceItems.map(item => ({ externalLineItemId: String(item.id), name: item.name, quantity: item.quantity }))
   };
 }
+
+export function extractOrderAttribution(order){
+  const meta=Array.isArray(order?.meta_data)?order.meta_data:[];
+  const get=(key)=>{const row=meta.find(x=>x.key===key);return row?.value==null?'':String(row.value).trim();};
+  const source=get('_wc_order_attribution_utm_source')||get('_wc_order_attribution_source_type')||'';
+  const medium=get('_wc_order_attribution_utm_medium')||'';
+  const campaign=get('_wc_order_attribution_utm_campaign')||'';
+  const content=get('_wc_order_attribution_utm_content')||'';
+  const term=get('_wc_order_attribution_utm_term')||'';
+  const landingUrl=get('_wc_order_attribution_session_entry')||'';
+  const occurredAt=get('_wc_order_attribution_session_start_time')||order?.date_created_gmt||order?.date_created||new Date().toISOString();
+  const meaningful=Boolean(source&&source!=='(direct)'||medium||campaign||content||term);
+  return {source:source||'(direct)',medium,campaign,content,term,landingUrl,occurredAt,meaningful};
+}

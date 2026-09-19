@@ -96,8 +96,13 @@ async function selectAudience(client, segmentType, limit = null, organizationId 
   const params = [organizationId];
   if (limit) params.push(limit);
   const sql = `SELECT c.id,c.name,u.mobile,COUNT(*) OVER()::integer AS audience_count
-    FROM customers c LEFT JOIN users u ON u.id=c.user_id
-    WHERE c.organization_id=$1 AND u.is_active IS DISTINCT FROM false AND ${condition}
+    FROM customers c
+    LEFT JOIN users u ON u.id=c.user_id
+    LEFT JOIN notification_preferences np ON np.user_id=u.id
+    WHERE c.organization_id=$1
+      AND u.is_active IS DISTINCT FROM false
+      AND COALESCE(np.marketing,false)=true
+      AND ${condition}
     ORDER BY c.created_at DESC${limit ? ' LIMIT $2' : ''}`;
   return (await client.query(sql,params)).rows;
 }
