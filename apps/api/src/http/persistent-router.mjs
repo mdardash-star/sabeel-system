@@ -200,6 +200,46 @@ export async function routePersistentRequest({ method, url, role, body = {}, con
     return response(200,{configured:publisher.configured,site:process.env.WORDPRESS_PUBLISH_URL||process.env.WOOCOMMERCE_BASE_URL||null});
   }
 
+  if(method==='GET'&&url==='/api/v1/marketing/data-readiness-summary'){
+    if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
+    const woo=createWooCommerceCatalogClient(),publisher=createWordPressPublisher(),sender=createMarketingChannelSender();
+    const [orders,attr,cost,backfill]=await Promise.all([
+      db.query(`SELECT COUNT(*)::integer AS total,MIN(paid_at) AS first_paid_at,MAX(paid_at) AS last_paid_at FROM orders WHERE external_source='woocommerce'`),
+      db.query(`SELECT COUNT(*)::integer AS total FROM order_attribution oa JOIN orders o ON o.id=oa.order_id WHERE o.external_source='woocommerce'`),
+      db.query(`SELECT COALESCE(SUM(oi.subtotal_ex_vat),0)::numeric(14,2) AS revenue,
+        COALESCE(SUM(oi.subtotal_ex_vat) FILTER(WHERE COALESCE(oi.unit_cost_snapshot,0)<=0),0)::numeric(14,2) AS affected_revenue
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE o.paid_at>=now()-interval '90 days'`),
+      db.query(`SELECT COUNT(*)::integer AS batches,MAX(created_at) AS last_batch_at FROM audit_log WHERE action='woocommerce.backfill_batch'`)
+    ]);
+    const total=Number(orders.rows[0]?.total||0),attributed=Number(attr.rows[0]?.total||0),
+      revenue=Number(cost.rows[0]?.revenue||0),affected=Number(cost.rows[0]?.affected_revenue||0);
+    const attributionRate=total?attributed/total*100:0,costRate=revenue?(revenue-affected)/revenue*100:100;
+    const historicalScore=total>=500?100:total>=200?80:total>=100?60:total>=25?40:0;
+    const checks=[
+      {key:'historical_orders',label:'Historical Orders',score:historicalScore,ready:historicalScore>=60},
+      {key:'attribution',label:'Attribution Coverage',score:Math.min(100,attributionRate),ready:attributionRate>=70},
+      {key:'costs',label:'Cost Coverage',score:Math.min(100,costRate),ready:costRate>=90},
+      {key:'woocommerce',label:'WooCommerce API',score:woo.configured?100:0,ready:woo.configured},
+      {key:'webhook',label:'WooCommerce Webhook',score:process.env.WOOCOMMERCE_WEBHOOK_SECRET?100:0,ready:Boolean(process.env.WOOCOMMERCE_WEBHOOK_SECRET)},
+      {key:'wordpress',label:'WordPress Publisher',score:publisher.configured?100:0,ready:publisher.configured},
+      {key:'marketing_channels',label:'Marketing Channels',score:(sender.whatsappConfigured||sender.emailConfigured)?100:0,ready:Boolean(sender.whatsappConfigured||sender.emailConfigured)}
+    ];
+    const decisionChecks=checks.filter(x=>['historical_orders','attribution','costs','woocommerce','webhook'].includes(x.key));
+    const decisionScore=Math.round(decisionChecks.reduce((a,x)=>a+x.score,0)/decisionChecks.length);
+    const executionChecks=checks.filter(x=>['wordpress','marketing_channels'].includes(x.key));
+    const executionScore=Math.round(executionChecks.reduce((a,x)=>a+x.score,0)/executionChecks.length);
+    const blockers=checks.filter(x=>!x.ready).map(x=>x.key);
+    return response(200,{summary:{
+      decisionScore,executionScore,
+      decisionStatus:decisionScore>=85?'ready':decisionScore>=65?'partial':'not_ready',
+      executionStatus:executionScore>=85?'ready':executionScore>0?'partial':'not_ready',
+      storedWooOrders:total,attributionRate,costCoverageRate:costRate,
+      backfillBatches:Number(backfill.rows[0]?.batches||0),
+      firstPaidAt:orders.rows[0]?.first_paid_at||null,lastPaidAt:orders.rows[0]?.last_paid_at||null,
+      lastBackfillAt:backfill.rows[0]?.last_batch_at||null
+    },checks,blockers});
+  }
+
   if(method==='GET'&&url==='/api/v1/marketing/cost-repair-queue'){
     if(!can(role,'marketing:read'))return response(403,{error:'forbidden'});
     const rows=(await db.query(`SELECT oi.product_id,oi.product_name,
