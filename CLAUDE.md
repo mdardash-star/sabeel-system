@@ -75,6 +75,18 @@ if(!cartToken&&nonce)headers.set("Nonce",nonce);
 4. طلب لم يُدفع بعد (pending/on-hold/cancelled/failed) يُعامَل كـ no-op (200) لا خطأ — لأن `serviceJobFromPaidOrder` يرمي استثناء لأي حالة غير processing/completed عن قصد.
 5. **ملاحظة نطاق:** `persistPaidServiceOrder` ينشئ سجلات (customer/order/order_items/service_job) **فقط** إذا كان أحد عناصر الطلب معلّمًا بـ `_subil_requires_service=yes`. طلبات لا تتطلب خدمة ميدانية **لا تُسجَّل حاليًا** في قاعدة بيانات SUBIL إطلاقًا — قد يكون هذا مقصودًا لنطاق MVP الحالي (تركيز على Field Service)، لكنه يعني عدم وجود سجل مالي/CRM لطلبات المنتجات البسيطة بعد.
 
+## ⚠️ خطر معماري معروف — Autopilot SEO ينفّذ كتابة مباشرة بلا موافقة بشرية (مؤجَّل بقرار، 2026-09-22)
+`scanMarketingAlerts()` في `apps/api/src/ai/marketing-alerts.mjs` تعمل تلقائيًا كل 6 ساعات داخل عملية `subil-api` نفسها (مربوطة في `server.mjs`)، وأيضًا عند الطلب عبر `POST /api/v1/marketing/alerts/run`. عند وجود منتج بأولوية SEO عالية، تستدعي `woo.applySafeSeoPatch(id)` (في `apps/api/src/integrations/woocommerce-catalog.mjs`) التي تنفّذ **PUT مباشر وفوري على WooCommerce الحقيقي** يُعدّل `name`/`short_description` للمنتج على subil.store **بلا أي مراجعة بشرية** — الحماية الوحيدة هي عدم التكرار لنفس المنتج خلال 24 ساعة (تجنب تكرار لا موافقة).
+
+هذا يخالف:
+- تعليق في نفس الملف يقول إن Autopilot "يقتصر على إجراءات آمنة وقابلة للتراجع"
+- نص واجهة `apps/admin/app/ai/marketing/page.tsx`: "الإرسال والإنفاق والتغييرات الحساسة تبقى تحت الاعتماد"
+- مبدأ الحوكمة الموثّق في `docs/ARCHITECTURE.md`: "AI لا ينفذ عمليات حساسة دون صلاحيات وقواعد موافقة واضحة"
+
+**لماذا هو خامل حاليًا (وليس آمنًا بالتصميم):** `render.yaml` لا يعرّف `WOOCOMMERCE_BASE_URL`/مفاتيح REST لخدمة `subil-api`، فمن المرجح أن `woo.configured===false` في الإنتاج الحالي — أي أن الكود لا يُنفَّذ فعليًا، لكن هذا اعتماد على غياب إعداد بيئة، لا على قيد في الكود نفسه. أي إضافة لاحقة لمفاتيح WooCommerce REST في Render (لأي غرض آخر) ستُفعّل هذا المسار تلقائيًا دون تنبيه.
+
+**القرار (بطلب صاحب المشروع، 2026-09-22):** تُترك كما هي الآن دون تعديل كود. هذا البند تذكير لأي قرار لاحق — إن أُضيفت مفاتيح WooCommerce REST مستقبلًا، يجب إعادة تقييم هذا الخطر أولًا قبل ذلك، أو تحويل `applySafeSeoPatch` لمسار موافقة (سجل اقتراح بدل PUT مباشر) في حينها.
+
 ## ملاحظة توضيحية: توجيه Amwal ليس خللًا
 كان يبدو أن `redirect_url` من checkout لبوابة Amwal يشير لصفحة WooCommerce الداخلية (`checkout/order-pay/{id}`) بدل رابط Amwal المستضاف مباشرة — **تبيّن أن هذا سلوك صحيح ومقصود**: صفحة `order-pay` تحتوي فعليًا على ودجت Amwal الحقيقي (`<amwal-checkout-button>` + `amwal-checkout.js`)، وكود العميل (`apps/mobile/app/payment/page.tsx`) يعمل `window.location.replace` (تنقّل كامل، ليس iframe) لهذه الصفحة تحديدًا لبوابات `amwal/tabby/tamara/tap` — يطابق إصلاحًا سابقًا موثّقًا بتاريخ `develop`: `fix(amwal): open hosted checkout directly instead of iframe`. لا تُعد فتح هذا كـ"مشكلة" دون تأكيد بصري حي فعلي أولًا.
 
@@ -117,6 +129,7 @@ Store API عام (بدون مصادقة) على `https://subil.store/wp-json/wc/
 - [ ] اختبار refunds/cancellations حسب البوابات
 - [ ] Production smoke + E2E بعد آخر نشر
 - [ ] نسخة احتياطية من WordPress/DB قبل أي عزل إضافات واسع
+- [ ] إعادة تقييم خطر Autopilot SEO (`applySafeSeoPatch`) قبل أي إضافة لمفاتيح WooCommerce REST في Render — انظر القسم أعلاه
 
 ## قواعد العمل
 - الأولوية: **Stabilization وإطلاق Production**، لا إضافة مزايا جديدة.
