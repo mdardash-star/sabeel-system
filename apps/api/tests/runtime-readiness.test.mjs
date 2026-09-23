@@ -42,3 +42,6 @@ test('push configuration must be all-or-nothing',()=>{
   assert.equal(result.ready,false);
   assert.ok(result.errors.some(x=>x.includes('partially configured')));
 });
+
+
+test('reports missing commercial messaging providers as warnings',()=>{const r=validateRuntimeReadiness({DATABASE_URL:'postgres://db',OTP_HASH_SECRET:'12345678901234567890123456789012',NODE_ENV:'production',SUBIL_ADMIN_ORIGINS:'https://admin.example.org'});assert.equal(r.ready,true);assert.ok(r.warnings.includes('Email marketing delivery is not configured'));assert.ok(r.warnings.includes('WhatsApp marketing delivery is not configured'));});
