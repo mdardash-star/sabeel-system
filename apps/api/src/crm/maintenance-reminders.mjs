@@ -9,7 +9,7 @@ export function maintenanceReminderEvents(assets, now = new Date()) {
       assetId: asset.id,
       productId: asset.productId,
       dueAt: asset.nextMaintenanceAt,
-      channels: ['whatsapp', 'sms'],
+      channels: ['push', 'email', 'whatsapp'],
       status: 'pending',
       createdAt: now.toISOString()
     }));
