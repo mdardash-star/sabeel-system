@@ -1,4 +1,4 @@
-"use client";
+"use client";import Header from"../components/Header";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import PreviewAuthGuard from "../preview-auth-guard";
@@ -18,7 +18,7 @@ export default function UsersPage(){
  const shown=useMemo(()=>{if(apiBase)return users;const q=query.trim();return users.filter(user=>(!q||user.mobile.includes(q))&&(status==="all"||(status==="active")===user.is_active));},[users,query,status]);
  async function createUser(event:FormEvent<HTMLFormElement>){event.preventDefault();const form=new FormData(event.currentTarget),mobile=String(form.get("mobile")||""),role=String(form.get("role")||"");setSaving("new");setError("");try{if(!apiBase)throw new Error("اربط API لإنشاء المستخدمين.");const response=await fetch(`${apiBase}/api/v1/users`,{method:"POST",headers:{"content-type":"application/json",Authorization:`Bearer ${token()}`},body:JSON.stringify({mobile,role})}),payload=await response.json();if(!response.ok)throw new Error(payload.error==="mobile_already_exists"?"رقم الجوال مستخدم مسبقًا.":"تعذر إنشاء المستخدم.");event.currentTarget.reset();setReload(v=>v+1);}catch(reason){setError(reason instanceof Error?reason.message:"تعذر إنشاء المستخدم.");}finally{setSaving("");}}
  async function updateUser(user:User,changes:{role?:string;isActive?:boolean}){setSaving(user.id);setError("");try{const response=await fetch(`${apiBase}/api/v1/users/${encodeURIComponent(user.id)}`,{method:"PATCH",headers:{"content-type":"application/json",Authorization:`Bearer ${token()}`},body:JSON.stringify(changes)}),payload=await response.json();if(!response.ok)throw new Error(payload.error==="cannot_modify_own_access"?"لا يمكن تعديل صلاحيات حسابك الحالي.":"تعذر تحديث المستخدم.");setUsers(list=>list.map(x=>x.id===user.id?payload.user:x));}catch(reason){setError(reason instanceof Error?reason.message:"تعذر تحديث المستخدم.");}finally{setSaving("");}}
- return <PreviewAuthGuard><main className="customers-page"><header className="customers-top"><a className="customers-brand" href="/"><span>S</span><strong>سبيل</strong><small>نظام التشغيل</small></a><nav className="section-nav"><a href="/">لوحة التحكم</a><a href="/jobs">المهام</a><a href="/customers">العملاء</a><a href="/technicians">الفنيون</a><a href="/finance">المالية</a><a className="active" href="/users">المستخدمون</a></nav><div className="profile-avatar">م</div></header><div className="customers-wrap">
+ return <PreviewAuthGuard><main className="customers-page"><Header active="/users"/><div className="customers-wrap">
   <div className="page-head"><div><p>الإدارة والأمان</p><h1>المستخدمون والصلاحيات</h1><span>إدارة حسابات الموظفين والأدوار وحالة الوصول للنظام</span></div></div>
   {!allowed?<div className="api-error">هذه الصفحة متاحة لمدير النظام فقط.</div>:<>
    {error&&<div className="api-error" role="alert">{error}</div>}
