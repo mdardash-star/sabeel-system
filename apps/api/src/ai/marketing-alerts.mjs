@@ -22,20 +22,12 @@ export async function scanMarketingAlerts(db,{actorUserId=null,organizationId=DE
   const warnings=commerceData?.dataQuality?.warnings||[];
   if(warnings.length)alerts.push({fingerprint:'marketing_data_quality',severity:'medium',title:'تحذير جودة بيانات المتجر',summary:`يوجد ${warnings.length} تحذير جودة في بيانات SUBIL Commerce.`,action:'استبعد القيم الشاذة من القرار حتى تصحيح المصدر وراجع الطلبات أو المنتجات المشار إليها.',metrics:{warnings,excludedProducts:commerceData?.dataQuality?.excludedProducts||[]}});
   const safeActions=[];
-  // Autopilot only performs reversible, non-spend actions. External sends remain gated by provider configuration and explicit campaign launch.
-  if(store?.products?.seo?.opportunities?.length){
-    const target=store.products.seo.opportunities.find(x=>Array.isArray(x.issues)&&x.issues.length>0);
-    if(target&&woo.configured){
-      try{
-        const recent=(await c.query(`SELECT 1 FROM audit_log WHERE action='ai.autopilot_seo_apply' AND entity_type='woocommerce_product' AND entity_id=$1 AND created_at>=now()-interval '24 hours' LIMIT 1`,[String(target.id)])).rows[0];
-        if(!recent){
-          const result=await woo.applySafeSeoPatch(target.id);
-          safeActions.push({type:'seo_apply',productId:target.id,changed:Boolean(result.changed),reason:'highest_seo_priority'});
-          await c.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,data)VALUES($1,'ai.autopilot_seo_apply','woocommerce_product',$2,$3::jsonb)`,[actorUserId,String(target.id),JSON.stringify({changed:Boolean(result.changed),issues:target.issues,scoreBefore:target.score,reason:'highest_seo_priority'})]);
-        }
-      }catch{}
-    }
-  }
+  // Autopilot only performs reversible, non-spend actions that need no human approval.
+  // Applying a SEO patch writes directly to the live WooCommerce product and is NOT one of
+  // those actions, so it is never triggered automatically here — only via the explicit
+  // per-product "Apply SEO" action a human picks in the admin UI
+  // (POST /api/v1/marketing/store/products/:id/seo/apply). The scan still surfaces the
+  // backlog as the marketing_seo_backlog alert above so it's visible for review.
   if(atRisk>0){
     try{
       const existing=(await c.query(`SELECT id FROM customer_segments WHERE organization_id=$1 AND segment_type='dormant_90d' AND is_active=true ORDER BY created_at DESC LIMIT 1`,[organizationId])).rows[0];

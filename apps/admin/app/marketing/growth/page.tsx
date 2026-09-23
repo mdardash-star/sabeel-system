@@ -132,7 +132,7 @@ async function scan(){if(!api)return setMsg("المسح الحقيقي يعمل 
 ["VIP loyalty",retentionJourneys?.summary?.vip_loyalty??0]
 ].map(x=><div className="segment-row" key={x[0]}><strong>{x[0]}</strong><span>{x[1]}</span></div>)}</article></section><section className="marketing-grid" style={{marginTop:16}}><article className="panel"><div className="panel-head"><div><h2>Automation Runtime</h2><p>ما يعمل فعليًا وما يحتاج تشغيل/ربط</p></div></div>{[
 ["Marketing alerts","يعمل دوريًا"],
-["Safe SEO Autopilot","يعمل عند Scan"],
+["Safe SEO Apply","يدوي لكل منتج فقط"],
 ["Historical Woo Sync","دفعات يدوية آمنة"],
 ["WhatsApp / Email",channels?.whatsapp?.configured||channels?.email?.configured?"Worker فعال":"بانتظار مزود"],
 ["WordPress publish",wpStatus?.configured?"جاهز":"بانتظار الربط"],
