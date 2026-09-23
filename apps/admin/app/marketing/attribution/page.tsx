@@ -1,4 +1,4 @@
-"use client";
+"use client";import Header from"../../components/Header";
 
 import { FormEvent, useEffect, useState } from "react";
 import PreviewAuthGuard from "../../preview-auth-guard";
@@ -60,7 +60,7 @@ export default function AttributionPage() {
     ["العائد ROAS", summary.roas ? `${Number(summary.roas).toLocaleString("ar-SA", { maximumFractionDigits: 2 })}×` : "—"],
   ];
 
-  return <PreviewAuthGuard><main className="customers-page attribution-page"><header className="customers-top"><a className="customers-brand" href="/"><span>S</span><strong>سبيل</strong><small>نظام التشغيل</small></a><nav className="section-nav"><a href="/">لوحة التحكم</a><a href="/marketing">الحملات</a><a href="/marketing/content">المحتوى</a><a className="active" href="/marketing/attribution">الإسناد والعائد</a><a href="/reports">التقارير</a></nav><div className="profile-avatar">م</div></header><div className="customers-wrap">
+  return <PreviewAuthGuard><main className="customers-page attribution-page"><Header active="/marketing"/><div className="customers-wrap">
     <div className="demo-notice"><span>نسخة المعاينة</span> الإسناد يعتمد أول وآخر نقطة اتصال خلال 30 يومًا قبل الطلب.</div>
     <div className="page-head"><div><p>قياس التسويق والمبيعات</p><h1>الإسناد والعائد التسويقي</h1><span>اعرف القناة والحملة التي بدأت وأغلقت كل عملية بيع</span></div><div className="purchasing-head-actions"><select className="report-period" value={period} onChange={(event) => setPeriod(event.target.value)}><option value="7">7 أيام</option><option value="30">30 يومًا</option><option value="90">90 يومًا</option></select>{canManage && <button className="primary-button" onClick={() => setModal(true)}>تسجيل إنفاق</button>}</div></div>
     <section className="marketing-stats attribution-stats">{cards.map(([title, value]) => <article key={title}><span>{title}</span><strong>{value}</strong></article>)}</section>

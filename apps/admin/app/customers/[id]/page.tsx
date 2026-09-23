@@ -1,4 +1,4 @@
-"use client";
+"use client";import Header from"../../components/Header";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
@@ -186,7 +186,7 @@ export default function CustomerDetails(){
   }
   const total=useMemo(()=>Number(customer?.order_total_ex_vat??customer?.orders.reduce((sum,order)=>sum+Number(order.total_ex_vat||0),0)??0),[customer]);
   const orderCount=Number(customer?.order_count??orderTotal);
-  return <PreviewAuthGuard><main className="customers-page"><header className="customers-top"><a className="customers-brand" href="/"><span>S</span><strong>سبيل</strong><small>نظام التشغيل</small></a><div className="profile-avatar">م</div></header><div className="customers-wrap"><a className="back-link" href="/customers">→ العودة إلى العملاء</a>
+  return <PreviewAuthGuard><main className="customers-page"><Header active="/customers"/><div className="customers-wrap"><a className="back-link" href="/customers">→ العودة إلى العملاء</a>
     {loading&&<div className="detail-loading" role="status">جارٍ تحميل بيانات العميل...</div>}{error&&<div className="api-error" role="alert">{error}</div>}
     {customer&&!loading&&<><div className="customer-profile-head"><div className="customer-avatar">{customer.name.slice(0,1)}</div><div><p>{customer.id}</p><h1>{customer.name}</h1><span className="status done">عميل نشط</span></div><button className="secondary-button" onClick={()=>setEditOpen(true)}>تعديل البيانات</button></div><section className="customer-detail-grid">
       <article className="panel detail-card"><div className="detail-card-head"><h2>بيانات التواصل والعناوين</h2><button onClick={()=>{setEditError("");setAddressOpen(!addressOpen);}}>+ إضافة عنوان</button></div><dl><div><dt>رقم الجوال</dt><dd dir="ltr">{customer.mobile||"—"}</dd></div><div><dt>عميل منذ</dt><dd>{date(customer.created_at)}</dd></div>{customer.addresses.map((item,index)=><div key={item.id||index}><dt>العنوان {index+1}</dt><dd>{item.address_text||"—"}{item.city_id?`، ${item.city_id}`:""}</dd></div>)}</dl>{addressOpen&&<form className="address-inline-form" onSubmit={addAddress}><input name="cityId" defaultValue="الرياض" disabled={updating} aria-label="المدينة"/><input name="addressText" placeholder="الحي، الشارع، رقم المبنى" disabled={updating} aria-label="تفاصيل العنوان"/>{editError&&<p className="form-error">{editError}</p>}<div><button type="button" className="secondary-button" onClick={()=>setAddressOpen(false)}>إلغاء</button><button className="primary-button" disabled={updating}>{updating?"جارٍ الحفظ...":"حفظ العنوان"}</button></div></form>}</article>
