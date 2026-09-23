@@ -19,6 +19,14 @@ export function validateRuntimeReadiness(env=process.env){
   if(configuredOtpSender===0)warnings.push('OTP sender is not configured; API health/readiness can run but login OTP delivery is unavailable');
   if(otpSenderValues.some(placeholder))warnings.push('OTP sender settings contain placeholders; login OTP delivery is unavailable');
 
+  const marketingValues=[env.EMAIL_SENDER_URL,env.EMAIL_SENDER_API_KEY,env.WHATSAPP_SENDER_URL,env.WHATSAPP_SENDER_API_KEY].map(clean);
+  const emailConfigured=Boolean(marketingValues[0]&&marketingValues[1]),whatsappConfigured=Boolean(marketingValues[2]&&marketingValues[3]);
+  if(Boolean(marketingValues[0])!==Boolean(marketingValues[1]))warnings.push('Email marketing sender is partially configured');
+  if(Boolean(marketingValues[2])!==Boolean(marketingValues[3]))warnings.push('WhatsApp marketing sender is partially configured');
+  if(!emailConfigured)warnings.push('Email marketing delivery is not configured');
+  if(!whatsappConfigured)warnings.push('WhatsApp marketing delivery is not configured');
+  if(marketingValues.some(placeholder))warnings.push('Marketing sender settings contain placeholders');
+
   const pushValues=[env.PUSH_PROVIDER_URL,env.PUSH_PROVIDER_API_KEY,env.PUSH_VAPID_PUBLIC_KEY].map(clean);
   const configuredPush=pushValues.filter(Boolean).length;
   if(configuredPush>0&&configuredPush<3)errors.push('Push notifications are partially configured; set PUSH_PROVIDER_URL, PUSH_PROVIDER_API_KEY and PUSH_VAPID_PUBLIC_KEY together');
