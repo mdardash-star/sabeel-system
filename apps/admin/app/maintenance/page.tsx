@@ -58,7 +58,7 @@ export default function MaintenancePage(){
   function changeWindow(value:WindowFilter){setWindowFilter(value);setPage(0);}
 
   return <PreviewAuthGuard><main className="customers-page maintenance-page"><Header active="/maintenance"/><div className="customers-wrap">
-    <div className="demo-notice"><span>نسخة المعاينة</span> مركز متابعة صيانة أجهزة العملاء دون أي تأثير على المتجر المباشر.</div>
+    <div className="demo-notice"><span>تشغيل فعلي</span> مركز متابعة صيانة أجهزة العملاء مرتبط ببيانات النظام المباشرة.</div>
     <div className="page-head"><div><p>التشغيل وخدمة ما بعد البيع</p><h1>مركز الصيانة</h1><span>متابعة الأجهزة المستحقة وترتيب الزيارات قبل التأخير</span></div></div>
     <section className="maintenance-stats" aria-label="ملخص الصيانة"><button className={windowFilter==="overdue"?"active overdue":"overdue"} onClick={()=>changeWindow("overdue")}><span>الصيانة المتأخرة</span><strong>{stats.overdue.toLocaleString("ar-SA")}</strong></button><button className={windowFilter==="7d"?"active":""} onClick={()=>changeWindow("7d")}><span>خلال ٧ أيام</span><strong>{stats.due_7_days.toLocaleString("ar-SA")}</strong></button><button className={windowFilter==="30d"?"active":""} onClick={()=>changeWindow("30d")}><span>خلال ٣٠ يومًا</span><strong>{stats.due_30_days.toLocaleString("ar-SA")}</strong></button><button className={windowFilter==="all"?"active":""} onClick={()=>changeWindow("all")}><span>الأجهزة النشطة</span><strong>{stats.active.toLocaleString("ar-SA")}</strong></button></section>
     {error&&<div className="api-error" role="alert">{error}</div>}
