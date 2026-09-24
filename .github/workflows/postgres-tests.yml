@@ -89,3 +89,21 @@ jobs:
         run: |
           COUNT=$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','customers','service_jobs','technician_settlements','wallet_entries','installed_assets','webhook_deliveries','technician_skills','technician_availability','technician_locations','compensation_policies','order_costs','auth_sessions');")
           test "$COUNT" = "0"
+      - name: Setup Node.js for production migration runner
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install migration dependencies
+        run: npm ci
+      - name: Apply all production migrations and verify idempotency
+        env:
+          DATABASE_URL: postgres://subil:test_password@localhost:5432/subil_test
+          DATABASE_SSL: "false"
+        run: |
+          npm run migrate --workspace @subil/api
+          npm run migrate --workspace @subil/api
+          EXPECTED=$(node -e "const fs=require('fs'); process.stdout.write(String(fs.readdirSync('apps/api/db/migrations').filter(name=>/^\\d+_.+\\.sql$/.test(name)&&!name.endsWith('.down.sql')).length))")
+          ACTUAL=$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM schema_migrations;")
+          test "$ACTUAL" = "$EXPECTED"
+          test "$(psql -h localhost -U subil -d subil_test -tAc "SELECT count(*) FROM pg_trigger WHERE tgname='service_jobs_status_notification_trg' AND NOT tgisinternal;")" = "1"
