@@ -1,0 +1,43 @@
+name: Hostinger Trial Stack
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'deploy/hostinger-trial/**'
+      - '.github/workflows/hostinger-trial.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate isolated trial secrets
+        working-directory: deploy/hostinger-trial
+        run: |
+          printf 'PG_PASSWORD=%s\nOTP_HASH_SECRET=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > trial.env
+          chmod 600 trial.env
+      - name: Validate Compose configuration
+        working-directory: deploy/hostinger-trial
+        run: docker compose --env-file trial.env -f compose.yaml config --quiet
+      - name: Build and start trial stack
+        working-directory: deploy/hostinger-trial
+        run: docker compose --env-file trial.env -f compose.yaml up --build -d --wait --wait-timeout 240
+      - name: Check trial endpoints
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:3001/ready
+          for port in 3002 3003 3004; do curl --fail --silent --show-error -o /dev/null "http://127.0.0.1:$port/"; done
+      - name: Print container state on failure
+        if: failure()
+        working-directory: deploy/hostinger-trial
+        run: |
+          docker compose --env-file trial.env -f compose.yaml ps
+          docker compose --env-file trial.env -f compose.yaml logs --tail=80
+      - name: Stop trial stack
+        if: always()
+        working-directory: deploy/hostinger-trial
+        run: docker compose --env-file trial.env -f compose.yaml down --volumes
