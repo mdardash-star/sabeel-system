@@ -1,0 +1,100 @@
+name: subil-hostinger-trial
+
+x-web: &web
+  init: true
+  restart: unless-stopped
+
+services:
+  db:
+    <<: *web
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: subil_trial
+      POSTGRES_USER: subil_trial
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?Set PG_PASSWORD in trial.env}
+    volumes:
+      - trial_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U subil_trial -d subil_trial"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    <<: *web
+    build:
+      context: ../..
+      dockerfile: deploy/hostinger-trial/Dockerfile
+      args:
+        APP: api
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgres://subil_trial:${PG_PASSWORD:?Set PG_PASSWORD in trial.env}@db:5432/subil_trial
+      OTP_HASH_SECRET: ${OTP_HASH_SECRET:?Set OTP_HASH_SECRET in trial.env}
+      SUBIL_ADMIN_ORIGINS: http://127.0.0.1:3002,http://127.0.0.1:3003,http://127.0.0.1:3004
+    command: ["sh", "-c", "npm run migrate --workspace @subil/api && npm run start --workspace @subil/api"]
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:3001:3001
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  admin:
+    <<: *web
+    build:
+      context: ../..
+      dockerfile: deploy/hostinger-trial/Dockerfile
+      args:
+        APP: admin
+        NEXT_PUBLIC_SUBIL_API_URL: http://127.0.0.1:3001
+    environment:
+      PORT: 3002
+    command: ["sh", "-c", "npm run start --workspace @subil/admin -- -p $PORT"]
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:3002:3002
+
+  technician:
+    <<: *web
+    build:
+      context: ../..
+      dockerfile: deploy/hostinger-trial/Dockerfile
+      args:
+        APP: technician
+        NEXT_PUBLIC_SUBIL_API_URL: http://127.0.0.1:3001
+    environment:
+      PORT: 3003
+    command: ["sh", "-c", "npm run start --workspace @subil/technician -- -p $PORT"]
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:3003:3003
+
+  mobile:
+    <<: *web
+    build:
+      context: ../..
+      dockerfile: deploy/hostinger-trial/Dockerfile
+      args:
+        APP: mobile
+        NEXT_PUBLIC_SUBIL_API_URL: http://127.0.0.1:3001
+    environment:
+      PORT: 3004
+    command: ["sh", "-c", "npm run start --workspace @subil/mobile -- -p $PORT"]
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:3004:3004
+
+volumes:
+  trial_pgdata:
