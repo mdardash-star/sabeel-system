@@ -12,5 +12,5 @@ test('creates pending reminder only for due active assets', () => {
   assert.equal(events[0].type, 'maintenance.due');
   assert.equal(events[0].assetId, 'a1');
   assert.equal(events[0].status, 'pending');
-  assert.deepEqual(events[0].channels, ['whatsapp', 'sms']);
+  assert.deepEqual(events[0].channels, ['push', 'email', 'whatsapp']);
 });
