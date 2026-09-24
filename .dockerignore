@@ -10,3 +10,4 @@ node_modules
 coverage
 **/coverage
 .DS_Store
+deploy/hostinger-trial/trial.env
