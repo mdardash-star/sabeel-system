@@ -11,6 +11,7 @@ function fakePool() {
     async query(sql, params = []) {
       calls.push({ sql, params });
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (/INSERT INTO webhook_deliveries/.test(sql)) return { rows: [{ delivery_key: params[0] }] };
       if (/SELECT \* FROM orders WHERE/.test(sql)) return { rows: [] };
       if (/SELECT c\.\*/.test(sql)) return { rows: [] };
       if (/INSERT INTO customers/.test(sql)) return { rows: [{ id: 'c1', name: 'SUBIL Customer' }] };
@@ -28,11 +29,6 @@ function fakePool() {
   };
   return {
     calls,
-    async query(sql, params = []) {
-      calls.push({ sql, params });
-      if (/INSERT INTO webhook_deliveries/.test(sql)) return { rows: [{ delivery_key: params[0] }] };
-      throw new Error(`Unexpected pool query: ${sql}`);
-    },
     async connect() { return client; }
   };
 }
